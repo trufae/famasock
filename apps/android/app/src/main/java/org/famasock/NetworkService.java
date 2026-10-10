@@ -63,7 +63,7 @@ public final class NetworkService extends VpnService {
                     } catch (Exception e) { if (!stopping) report(e); }
                 }, "famasock-events").start();
                 changed();
-            } catch (Exception e) { report(e); stopSelf(); }
+            } catch (Exception e) { report(e); main.post(() -> { shutdown(); stopSelf(); }); }
         });
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -109,7 +109,7 @@ public final class NetworkService extends VpnService {
                     }
                     tun = builder.establish();
                     if (tun == null) throw new IllegalStateException("VPN permission was revoked");
-                    tunOutput = new FileOutputStream(tun.getFileDescriptor());
+                    tunOutput = new ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.dup(tun.getFileDescriptor()));
                     String session = vpnId;
                     pumping = true;
                     outgoing = new Thread(() -> pumpOutgoing(session), "famasock-tun-read");

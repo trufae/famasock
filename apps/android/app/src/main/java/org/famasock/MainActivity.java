@@ -109,9 +109,9 @@ public final class MainActivity extends Activity {
     private void run(JSONObject command) { request(command, data -> refresh()); }
     private void error(String message) { failure.setText(message == null ? "Unknown error" : message); }
     private void refresh() {
-        if (service == null || !service.ready()) { state.setText("Networking stopped or starting…"); peers.removeAllViews(); tunnels.removeAllViews(); pending.removeAllViews(); return; }
-        String serviceError = service.takeError();
+        String serviceError = service == null ? null : service.takeError();
         if (serviceError != null) error(serviceError);
+        if (service == null || !service.ready()) { state.setText("Networking stopped or starting…"); peers.removeAllViews(); tunnels.removeAllViews(); pending.removeAllViews(); return; }
         if (refreshing) return;
         refreshing = true;
         NetworkService source = service;
