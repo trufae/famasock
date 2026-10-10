@@ -9,6 +9,13 @@ struct FamasockError: LocalizedError {
 
 /// Owns the C handle and joins all in-flight calls before freeing it.
 final class RustCore: @unchecked Sendable {
+    static let version = String(cString: famasock_version())
+    static let cryptoInfo: [String: Any] = {
+        let raw = famasock_crypto_info()
+        defer { famasock_string_free(raw) }
+        let data = Data(String(cString: raw).utf8)
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }()
     private let handle: OpaquePointer
     private let lock = NSLock()
     private let calls = DispatchGroup()

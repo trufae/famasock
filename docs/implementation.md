@@ -10,10 +10,10 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 - [x] Persistent restricted-permission identity/state and exclusive owner lock.
 - [x] External-key support for iOS Keychain; no external key written to identity file.
 - [x] Versioned, bounded protocol and expiring random single-use invitation URI.
-- [x] Explicit pairing approval/rejection; no default service grants.
+- [x] Explicit pairing approval/rejection; paired TCP access defaults to acceptance with request logs and optional restrictions.
 - [x] Multi-peer Iroh transport, connection reuse, bounded streams/tasks/queues.
 - [x] Concurrent TCP forwarding, EOF/half-close and live-session revocation.
-- [x] Authorized reverse listeners and listener cleanup.
+- [x] Paired reverse listeners, optional port restrictions and listener cleanup.
 - [x] SOCKS CONNECT, remote DNS and CIDR/port destination checks.
 - [x] IPv4 packet validation, QUIC datagram transfer and spoofing rejection.
 - [x] C ABI command/event/packet interfaces; blocked-reader shutdown test.

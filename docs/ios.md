@@ -14,6 +14,66 @@ The project can be regenerated deterministically with
 `python3 scripts/generate-xcode.py`; change the generator when changing targets
 or build settings.
 
+To build just the Rust library from the repository root, no environment variables
+are needed:
+
+```sh
+apps/ios/build-rust.sh
+```
+
+This defaults to `iphoneos` / `arm64` (`aarch64-apple-ios`), discovers the SDK
+with `xcrun`, and copies the library to `apps/ios/Frameworks/libfamasock.a`.
+Xcode's environment overrides these defaults when building the app or simulator.
+
+In the forwarding form, **Listen on iPhone** means
+`iPhone localhost:listening-port → peer destination-host:destination-port`.
+For SSH on your Mac, choose iPhone, listening port `2222`, destination host
+`localhost`, and destination port `22`. Choosing the peer as the listener reverses
+the path: `peer localhost:listening-port → iPhone localhost:destination-port`.
+Both ends and their ports are shown as you edit the form. Paired TCP, SOCKS and
+reverse-forward requests are accepted and logged by default. Optional access
+restrictions are configured on the device receiving the request.
+
+To test the iPhone forward from your Mac, enable **Listen on all interfaces
+(0.0.0.0)** under **Listen on iPhone**. With it off, the listener binds
+`127.0.0.1`; with it on, it binds `0.0.0.0` and accepts connections to the iPhone's
+Wi-Fi IPv4 address. For example, keep listening port `2222`, destination host
+`localhost` and destination port `22`, then run this on your Mac while both
+devices are on the same Wi-Fi:
+
+```sh
+ssh -p 2222 YOUR_MAC_USERNAME@IPHONE_WIFI_IP
+```
+
+Find the iPhone's IP address in Settings > Wi-Fi > the network's info button.
+Connect to that address, not `0.0.0.0`. Keep Famasock open on the iPhone during
+the test. The path is Mac > iPhone:2222 > paired Mac's localhost:22.
+
+You can also test without leaving the iPhone app: open **TCP test client** under
+**Tools**, or **Test a TCP connection** on the peer screen. Connect to
+`127.0.0.1:2222` after starting a forward. An SSH destination should immediately
+display its `SSH-2.0-…` banner. You can select any host/port, send text with an
+optional CRLF newline, and read/copy received text in the console. This is a
+chat-style screen: connection controls at the top, a scrolling console in the
+middle, and the text composer pinned below it, above the keyboard. This is a
+plain TCP diagnostic client; it does not implement SSH login or Telnet option
+negotiation. It disconnects when leaving its screen or backgrounding the app.
+
+Connection and tunnel setup show progress. Starting a forward or SOCKS listener
+returns to the peer screen on success and displays a confirmation; errors keep
+the form open. Ordinary forwards still stop when the iPhone app backgrounds.
+
+The peer list's **About Famasock** section shows the installed app version/build
+and the actual bundled Rust core version, even when the core is stopped or VPN
+is active. The CLI displays its core version with `--version` or `version`;
+`serve` prints it at startup and `status` reports the running daemon's version.
+
+**About Famasock > Crypto information** displays Ed25519 identity key sizes,
+Keychain storage, QUIC/TLS 1.3, and the cipher suites and key exchanges supported
+by the compiled Rust TLS provider. Capabilities are read from the core even
+when it is stopped; they are not a claim about a particular connection's
+negotiated cipher.
+
 For unsigned compilation (does not install a working VPN on a phone):
 
 ```sh
@@ -51,7 +111,7 @@ locked or inaccessible: that is an error requiring user attention.
 2. Scan a QR displayed on a dark and a light terminal; test denied camera access.
 3. Check both identities, approve/reject/expire/cancel pairing, restart the app.
 4. Forward a service from a Linux host, including a large response and half-close.
-5. Verify that unauthorized services/SOCKS destinations are refused.
+5. Enable optional access restrictions and verify omitted services/SOCKS destinations are refused.
 6. Configure the Linux TUN and policy from vpn.md, start VPN, test allowed subnet.
 7. Lock the phone; test traffic, Wi-Fi/cellular changes, sleep and reconnection.
 8. Stop VPN, verify route/DNS removal and that foreground networking can reopen.

@@ -1,6 +1,6 @@
 # Famasock
 
-Pair your iPhone, Linux machine or Mac, then access explicitly allowed services
+Pair your iPhone, Linux machine or Mac, then choose TCP destinations on your peers
 through encrypted Iroh connections. Direct QR pairing does not need an email
 account, public IP address or router port forwarding.
 
@@ -43,10 +43,14 @@ famasock pair
 Scan the terminal QR in the native iOS app. Confirm the invitation on the phone,
 then check the requesting device identity and type `y` in the terminal. The
 invitation expires after five minutes and is consumed by the first valid scan,
-even if subsequently rejected. Pairing grants **no service access**.
+even if subsequently rejected. After approval, paired devices can open TCP and
+SOCKS destinations and create reverse forwards without additional grants.
+Requests are logged by the receiving device. This also applies to saved peers
+whose policy has no `restricted` field. Unpaired devices cannot open tunnels.
 
 ```sh
 famasock peers
+# Optional names for frequently used destinations:
 famasock allow iPhone ssh 127.0.0.1:22
 famasock allow iPhone web 127.0.0.1:8080
 ```
@@ -67,7 +71,7 @@ famasock serve --name laptop
 # In another terminal; paste the invitation URI, then press Return:
 famasock pair --accept -
 famasock connect home
-famasock forward home 2222:ssh
+famasock forward home 2222:127.0.0.1:22
 famasock socks home --listen 127.0.0.1:1080
 famasock status
 famasock stop TUNNEL_ID
@@ -77,20 +81,32 @@ famasock disconnect home
 For connectivity diagnostics, `famasock serve --relay-only` disables direct UDP
 and requires encrypted relay transport. Normal mode prefers direct connections.
 
-Multiple peers and tunnels can run together. Local listeners bind loopback only.
+Multiple peers and tunnels can run together. TCP forwards bind the requested
+listening address; the CLI defaults to loopback and iOS offers an all-interfaces
+toggle (`0.0.0.0`) for connections from other devices. SOCKS and reverse listeners
+bind loopback only.
 A dropped TCP stream is never replayed. A new TCP connection may establish a new
 Iroh session after disconnection. Tunnels are runtime configuration: restart them
 after a daemon restart. `status` reports tunnel IDs and errors are emitted by the
 daemon and by the app's event stream.
 
-## Reverse forwarding and SOCKS permissions
+`famasock --version` (or `famasock version`) shows the CLI's bundled Rust core
+version without starting a daemon. `serve` prints its version at startup, and
+`famasock status` includes the running daemon's version, so it also works when
+the installed CLI has been updated but the daemon has not been restarted. The
+iOS peer list shows the app version/build and bundled Rust core version under
+**About Famasock**.
 
-Policies describe what a peer may access **on the machine storing that policy**.
+## Optional access restrictions
+
+Paired access is open by default. To restrict it, set `"restricted": true` in a
+peer's policy. Policies describe what a peer may access **on the machine storing that policy**.
 Use `famasock policy PEER policy.json` to replace a peer's inbound policy. This
 closes existing sessions so removed grants take effect immediately.
 
 ```json
 {
+  "restricted": true,
   "services": {"ssh": "127.0.0.1:22"},
   "reverse_ports": [8080],
   "socks_networks": ["192.168.1.0/24"],
@@ -98,7 +114,9 @@ closes existing sessions so removed grants take effect immediately.
 }
 ```
 
-After granting the laptop reverse port 8080 on home:
+Reverse forwarding listens on the peer and connects back to this device. With
+the default open access, no port grant is needed; a restricted peer must be
+granted the listening port:
 
 ```sh
 # Runs on the laptop. A home listener at 127.0.0.1:8080 connects back to
@@ -106,11 +124,13 @@ After granting the laptop reverse port 8080 on home:
 famasock reverse home 8080:127.0.0.1:3000
 ```
 
-SOCKS supports CONNECT, IPv4, IPv6 destinations and remote DNS resolution. Both
-the destination network and port must be granted. Every resolved DNS address is
+SOCKS supports CONNECT, IPv4, IPv6 destinations and remote DNS resolution. With
+restrictions enabled, both the destination network and port must be granted.
+Every resolved DNS address is
 checked before connecting to that numeric address. A SOCKS listener does not
 redirect system traffic; applications must explicitly use it (for example,
-`curl --socks5-hostname 127.0.0.1:1080 ...`). No exit-node permission is implicit.
+`curl --socks5-hostname 127.0.0.1:1080 ...`). VPN still needs explicit interface and
+route configuration.
 
 ```sh
 famasock rename PEER new-name

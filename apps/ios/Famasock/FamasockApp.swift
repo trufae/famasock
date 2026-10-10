@@ -21,6 +21,11 @@ struct FamasockApp: App {
 struct PeersView: View {
     @EnvironmentObject var model: Model
     @State private var add = false
+    private var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+        return "\(version) (build \(build))"
+    }
     var body: some View {
         NavigationStack {
             List {
@@ -46,10 +51,32 @@ struct PeersView: View {
                 Section {
                     Text("Port forwarding and SOCKS run while this app is active. VPN uses the system's Packet Tunnel extension to continue in the background.").font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("Tools") {
+                    NavigationLink("TCP test client") { TCPClientView() }
+                }
+                Section("About Famasock") {
+                    LabeledContent("App version", value: appVersion)
+                    LabeledContent("Rust core version", value: RustCore.version)
+                    NavigationLink("Crypto information") { CryptoInfoView() }
+                }
             }
             .navigationTitle("Famasock")
             .toolbar { Button { add = true } label: { Image(systemName: "qrcode.viewfinder") }.disabled(!model.ready) }
             .sheet(isPresented: $add) { AddPeerView() }
+        }
+        .overlay(alignment: .bottom) {
+            if let notice = model.notice {
+                Label(notice, systemImage: "checkmark.circle.fill")
+                    .font(.callout).padding()
+                    .background(.regularMaterial, in: Capsule()).padding()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut, value: model.notice)
+        .task(id: model.notice) {
+            guard let notice = model.notice else { return }
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled && model.notice == notice { model.notice = nil }
         }
     }
 }
@@ -100,9 +127,12 @@ struct PeerView: View {
     @EnvironmentObject var model: Model
     let peerID: String
     @State private var services: [String] = []
+    @State private var remoteRestricted = true
+    @State private var connecting = false
     @State private var rename = ""
     @State private var policy = ""
     @State private var showPolicy = false
+    @State private var allowAll = true
     @State private var remove = false
     var peer: Peer? { model.peers.first { $0.id == peerID } }
     var body: some View {
@@ -110,18 +140,24 @@ struct PeerView: View {
             if let peer {
                 Section("Connection") {
                     Text(peer.id).font(.caption.monospaced()).textSelection(.enabled)
-                    Text(peer.connected ? "Connected · \(peer.path ?? "unknown")" : "Disconnected")
-                    Button("Connect / refresh services") { Task { await connect() } }.disabled(!model.ready)
-                    Button("Disconnect") { Task { await model.run(["op": "disconnect", "peer": peerID]) } }.disabled(!model.ready)
+                    Text(connecting ? "Connecting…" : peer.connected ? "Connected · \(peer.path ?? "unknown")" : "Disconnected")
+                    Button { Task { await connect(showFeedback: true) } } label: {
+                        HStack {
+                            if connecting { ProgressView() }
+                            Text(connecting ? "Connecting…" : peer.connected ? "Refresh connection" : "Connect")
+                        }
+                    }.disabled(!model.ready || connecting)
+                    Button("Disconnect") { Task { await model.run(["op": "disconnect", "peer": peerID], success: "Disconnected from \(peer.name)") } }.disabled(!model.ready || connecting)
                 }
                 Section("Services") {
-                    if services.isEmpty { Text("No services loaded. Grant access with famasock allow on the remote computer.").font(.footnote) }
+                    Text(remoteRestricted ? "\(peer.name) accepts its configured services and ports." : "Choose any destination host and port on \(peer.name). Paired requests are accepted and logged.").font(.footnote)
                     ForEach(services, id: \.self) { Text($0) }
-                    NavigationLink("Port forwarding") { ForwardView(peer: peerID, services: services) }.disabled(!model.ready)
-                    NavigationLink("SOCKS5 proxy") { SocksView(peer: peerID) }.disabled(!model.ready)
+                    NavigationLink("Port forwarding") { ForwardView(peer: peerID, services: services, restricted: remoteRestricted) }.disabled(!model.ready || connecting)
+                    NavigationLink("SOCKS5 proxy") { SocksView(peer: peerID) }.disabled(!model.ready || connecting)
                     NavigationLink("VPN") { VPNView(peer: peerID) }
                 }
                 Section("Active tunnels") {
+                    NavigationLink("Test a TCP connection") { TCPClientView() }
                     ForEach(model.tunnels.filter { $0.peer == peerID }) { t in
                         VStack(alignment: .leading) {
                             Text("\(t.kind): \(t.detail)").font(.caption)
@@ -132,8 +168,9 @@ struct PeerView: View {
                 Section("Device") {
                     TextField("New name", text: $rename)
                     Button("Rename") { Task { await model.run(["op": "rename", "peer": peerID, "name": rename]) } }.disabled(rename.isEmpty || !model.ready)
-                    Button("Inbound permissions") {
+                    Button("Access settings") {
                         policy = (try? String(data: JSONSerialization.data(withJSONObject: peer.policy, options: [.prettyPrinted, .sortedKeys]), encoding: .utf8)) ?? "{}"
+                        allowAll = !(peer.policy["restricted"] as? Bool ?? false)
                         showPolicy = true
                     }.disabled(!model.ready)
                     Button("Remove and revoke", role: .destructive) { remove = true }.disabled(!model.ready)
@@ -147,73 +184,226 @@ struct PeerView: View {
         .sheet(isPresented: $showPolicy) {
             NavigationStack {
                 Form {
-                    Text("These permissions control what this peer may access on this iPhone. Remote permissions must be granted on the remote device.").font(.footnote)
-                    TextEditor(text: $policy).font(.caption.monospaced()).frame(minHeight: 260)
-                    Button("Save permissions") {
+                    Toggle("Allow any TCP connection from this peer", isOn: $allowAll)
+                    Text("This controls access to this iPhone. Paired TCP, SOCKS and reverse-forward requests are accepted and logged by default. Turn this off to use the service and port restrictions below. VPN still needs its interface and route configuration.").font(.footnote)
+                    DisclosureGroup("Service, port and VPN settings") {
+                        TextEditor(text: $policy).font(.caption.monospaced()).frame(minHeight: 260)
+                    }
+                    Button("Save access settings") {
                         Task {
                             do {
-                                let value = try JSONSerialization.jsonObject(with: Data(policy.utf8))
-                                await model.run(["op": "policy", "peer": peerID, "policy": value])
-                                if model.error == nil { showPolicy = false }
+                                guard var value = try JSONSerialization.jsonObject(with: Data(policy.utf8)) as? [String: Any] else { throw FamasockError(message: "Settings must be a JSON object") }
+                                value["restricted"] = !allowAll
+                                if await model.run(["op": "policy", "peer": peerID, "policy": value], success: "Access settings saved") { showPolicy = false }
                             } catch { model.error = error.localizedDescription }
                         }
                     }
-                }.navigationTitle("Inbound permissions").toolbar { Button("Close") { showPolicy = false } }
+                }.navigationTitle("Access settings").toolbar { Button("Close") { showPolicy = false } }
             }
         }
     }
-    func connect() async {
-        do { services = try await model.request(["op": "services", "peer": peerID])["services"] as? [String] ?? []; await model.refresh() }
+    func connect(showFeedback: Bool = false) async {
+        guard !connecting else { return }
+        connecting = true; defer { connecting = false }
+        model.error = nil
+        do {
+            let result = try await model.request(["op": "services", "peer": peerID])
+            services = result["services"] as? [String] ?? []
+            remoteRestricted = result["restricted"] as? Bool ?? true
+            await model.refresh()
+            if showFeedback { model.notice = "Connected to \(peer?.name ?? "peer")" }
+        }
         catch { model.error = error.localizedDescription }
     }
 }
 struct ForwardView: View {
     @EnvironmentObject var model: Model
+    @Environment(\.dismiss) private var dismiss
     let peer: String
     let services: [String]
+    let restricted: Bool
     @State private var reverse = false
+    @State private var listenAll = false
     @State private var port = "2222"
     @State private var service = "ssh"
-    @State private var targetPort = "3000"
+    @State private var targetHost = "localhost"
+    @State private var targetPort = "22"
+    @State private var starting = false
+    var peerName: String { model.peers.first { $0.id == peer }?.name ?? "Remote device" }
+    var listenerName: String { reverse ? peerName : "iPhone" }
+    var listenAddress: String { !reverse && listenAll ? "0.0.0.0" : "127.0.0.1" }
+    var listenerHost: String { !reverse && listenAll ? "0.0.0.0" : "localhost" }
+    var destinationName: String { reverse ? "iPhone" : peerName }
+    var destination: String {
+        let host = reverse ? "localhost" : targetHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host):\(targetPort)"
+    }
+    var connectionPath: String { "\(listenerName) \(listenerHost):\(port) → \(destinationName) \(!reverse && restricted ? service : destination)" }
     var body: some View {
         Form {
-            Picker("Direction", selection: $reverse) { Text("Local").tag(false); Text("Reverse").tag(true) }.pickerStyle(.segmented)
-            TextField(reverse ? "Remote listening port" : "Local listening port", text: $port).keyboardType(.numberPad)
-            if reverse { TextField("Local destination port", text: $targetPort).keyboardType(.numberPad) }
-            else {
-                TextField("Approved service name", text: $service).textInputAutocapitalization(.never).autocorrectionDisabled()
-                if !services.isEmpty { Picker("Available services", selection: $service) { ForEach(services, id: \.self) { Text($0) } } }
+            Section("Connection path") {
+                Text(connectionPath).font(.callout.monospaced()).textSelection(.enabled)
+                Text("Connections arriving on \(listenerName) are forwarded to the destination on \(destinationName).").font(.footnote)
             }
-            Button("Start forwarding") {
-                Task {
-                    guard let p = UInt16(port), p > 0 else { model.error = "Enter a port between 1 and 65535"; return }
-                    if reverse {
-                        guard let target = UInt16(targetPort), target > 0 else { model.error = "Invalid destination port"; return }
-                        await model.run(["op": "reverse", "peer": peer, "port": Int(p), "target": "127.0.0.1:\(target)"])
-                    } else { await model.run(["op": "forward", "peer": peer, "listen": "127.0.0.1:\(p)", "service": service]) }
+            Section("Listen on") {
+                Picker("Device", selection: $reverse) { Text("iPhone").tag(false); Text(peerName).tag(true) }.pickerStyle(.segmented)
+                if !reverse {
+                    Toggle("Listen on all interfaces (0.0.0.0)", isOn: $listenAll)
+                    LabeledContent("Listening address", value: listenAddress)
+                }
+                LabeledContent("Listening port") { TextField("2222", text: $port).keyboardType(.numberPad).multilineTextAlignment(.trailing) }
+            }
+            Section("Connect to \(destinationName)") {
+                if !reverse && restricted {
+                    TextField("Saved service name", text: $service).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if !services.isEmpty { Picker("Saved services", selection: $service) { ForEach(services, id: \.self) { Text($0) } } }
+                    Text("\(peerName) has enabled access restrictions. Select a service configured there.").font(.footnote)
+                } else {
+                    if reverse { LabeledContent("Destination host", value: "localhost") }
+                    else { TextField("Destination host on \(peerName)", text: $targetHost).textInputAutocapitalization(.never).autocorrectionDisabled() }
+                    LabeledContent("Destination port") { TextField("22", text: $targetPort).keyboardType(.numberPad).multilineTextAlignment(.trailing) }
                 }
             }
-            Text("Listeners bind to loopback. Reverse listening ports require permission on the remote peer.").font(.footnote)
-        }.navigationTitle("Port forwarding")
+            Button {
+                starting = true
+                Task {
+                    defer { starting = false }
+                    guard let p = UInt16(port), p > 0 else { model.error = "Enter a port between 1 and 65535"; return }
+                    let command: [String: Any]
+                    if reverse {
+                        guard let target = UInt16(targetPort), target > 0 else { model.error = "Invalid destination port"; return }
+                        command = ["op": "reverse", "peer": peer, "port": Int(p), "target": "127.0.0.1:\(target)"]
+                    } else {
+                        if restricted {
+                            guard !service.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { model.error = "Enter a saved service name"; return }
+                        } else {
+                            guard let target = UInt16(targetPort), target > 0 else { model.error = "Enter a destination port between 1 and 65535"; return }
+                            let host = targetHost.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !host.isEmpty && host.count <= 253 && !host.contains(where: { $0.isWhitespace }) else { model.error = "Enter a destination hostname or IP address"; return }
+                        }
+                        command = ["op": "forward", "peer": peer, "listen": "\(listenAddress):\(p)", "service": restricted ? service : destination]
+                    }
+                    if await model.run(command, success: "Forwarding started on \(listenerName) \(listenerHost):\(p)") { dismiss() }
+                }
+            } label: { HStack { if starting { ProgressView() }; Text(starting ? "Starting forwarding…" : "Start forwarding") } }
+            Text(!reverse && listenAll ? "From your Mac or another device on the same Wi-Fi, connect to this iPhone's Wi-Fi IP address on port \(port). It runs while Famasock is in the foreground on this iPhone." : "Connect to localhost:\(port) on \(listenerName) to use this forward. It runs while Famasock is in the foreground on this iPhone.").font(.footnote)
+        }.navigationTitle("Port forwarding").disabled(starting || !model.ready).navigationBarBackButtonHidden(starting)
     }
 }
 struct SocksView: View {
     @EnvironmentObject var model: Model
+    @Environment(\.dismiss) private var dismiss
     let peer: String
     @State private var port = "1080"
+    @State private var starting = false
     var body: some View {
         Form {
-            TextField("Local port", text: $port).keyboardType(.numberPad)
-            Button("Start SOCKS5") {
+            TextField("Listening port on iPhone", text: $port).keyboardType(.numberPad)
+            Button {
+                starting = true
                 Task {
+                    defer { starting = false }
                     guard let p = UInt16(port), p > 0 else { model.error = "Invalid port"; return }
-                    await model.run(["op": "socks", "peer": peer, "listen": "127.0.0.1:\(p)"])
+                    if await model.run(["op": "socks", "peer": peer, "listen": "127.0.0.1:\(p)"], success: "SOCKS5 listening on iPhone:\(p)") { dismiss() }
                 }
-            }
-            Text("Only applications configured to use this SOCKS5 proxy will use it. It does not redirect all iPhone traffic. CONNECT is supported; DNS is resolved on the remote peer. The remote peer must allow the destination network and port.").font(.footnote)
-        }.navigationTitle("SOCKS5")
+            } label: { HStack { if starting { ProgressView() }; Text(starting ? "Starting SOCKS5…" : "Start SOCKS5") } }
+            Text("Configure your client to use iPhone localhost:\(port). The paired device opens the requested destination and resolves its hostname. Requests are accepted and logged unless that device enables access restrictions.").font(.footnote)
+        }.navigationTitle("SOCKS5").disabled(starting || !model.ready).navigationBarBackButtonHidden(starting)
     }
 }
+struct TCPClientView: View {
+    @StateObject private var client = TCPClient()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var host = "127.0.0.1"
+    @State private var port = "2222"
+    @State private var message = ""
+    @State private var appendNewline = true
+    private var canSend: Bool { client.connected && !client.sending && (!message.isEmpty || appendNewline) }
+    private func send() {
+        guard canSend else { return }
+        client.send(message + (appendNewline ? "\r\n" : ""))
+        message = ""
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    TextField("Host", text: $host).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityLabel("Destination host")
+                    TextField("Port", text: $port).keyboardType(.numberPad).frame(width: 75).accessibilityLabel("Destination port")
+                }.textFieldStyle(.roundedBorder).disabled(client.connecting || client.connected)
+                HStack {
+                    if client.connecting { ProgressView().controlSize(.small) }
+                    Text(client.status).font(.caption).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    if client.connecting || client.connected { Button("Disconnect") { client.disconnect() } }
+                    else { Button("Connect") { client.connect(host: host, port: port) } }
+                }.buttonStyle(.bordered)
+            }.padding()
+            Divider()
+            ScrollViewReader { scroll in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(client.output.isEmpty ? "Connect to 127.0.0.1:2222 to test your forward. An SSH destination should send an SSH-2.0 banner." : client.output)
+                            .font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                            .foregroundStyle(client.output.isEmpty ? .secondary : .primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Color.clear.frame(height: 1).id("end")
+                    }.padding()
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: client.output) { _, _ in scroll.scrollTo("end", anchor: .bottom) }
+            }
+        }.navigationTitle("TCP test client")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 10) {
+                    Divider()
+                    HStack(alignment: .bottom) {
+                        TextField("Text to send", text: $message, axis: .vertical)
+                            .lineLimit(1...5).textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .submitLabel(.send).onSubmit { send() }
+                        Button(action: send) {
+                            if client.sending { ProgressView() }
+                            else { Image(systemName: "arrow.up").font(.headline) }
+                        }.buttonStyle(.borderedProminent).disabled(!canSend).accessibilityLabel("Send text")
+                    }.padding(.horizontal)
+                    Toggle("Append newline (CRLF)", isOn: $appendNewline).font(.caption).padding(.horizontal)
+                }.padding(.bottom, 10).background(Color(.secondarySystemBackground))
+            }
+            .toolbar { Button("Clear") { client.clear() } }
+            .onDisappear { client.disconnect() }
+            .onChange(of: scenePhase) { _, phase in if phase == .background { client.disconnect() } }
+    }
+}
+
+struct CryptoInfoView: View {
+    private let info = RustCore.cryptoInfo
+    var body: some View {
+        List {
+            Section("Identity") {
+                LabeledContent("Signing algorithm", value: info["identity_algorithm"] as? String ?? "Unknown")
+                LabeledContent("Public key", value: "\(info["public_key_bits"] as? Int ?? 0) bits (32 bytes)")
+                LabeledContent("Private seed", value: "\(info["secret_seed_bits"] as? Int ?? 0) bits (32 bytes)")
+                LabeledContent("Key storage", value: "Apple Keychain · this device only")
+            }
+            Section("Encrypted peer transport") {
+                LabeledContent("Transport", value: info["transport"] as? String ?? "Unknown")
+                LabeledContent("TLS", value: info["tls"] as? String ?? "Unknown")
+                LabeledContent("Provider", value: info["provider"] as? String ?? "Unknown")
+            }
+            Section("Supported cipher suites") {
+                ForEach(info["cipher_suites"] as? [String] ?? [], id: \.self) { Text($0).font(.caption.monospaced()).textSelection(.enabled) }
+            }
+            Section("Supported key exchanges") {
+                ForEach(info["key_exchanges"] as? [String] ?? [], id: \.self) { Text($0).textSelection(.enabled) }
+            }
+            Section {
+                Text("These are this build's configured capabilities. Each connection negotiates one cipher suite and key exchange. Key sizes above describe encoded lengths.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.navigationTitle("Crypto information")
+    }
+}
+
 struct VPNView: View {
     @EnvironmentObject var model: Model
     let peer: String
