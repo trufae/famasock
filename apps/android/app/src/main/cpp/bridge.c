@@ -39,6 +39,10 @@ static jbyteArray owned(JNIEnv *env, char *value) {
     famasock_string_free(value);
     return result;
 }
+extern void famasock_android_init(JNIEnv *env, jobject context);
+JNIEXPORT void JNICALL JNI(initializeNative)(JNIEnv *env, jclass klass, jobject context) {
+    UNUSED(); famasock_android_init(env, context);
+}
 JNIEXPORT jlong JNICALL JNI(openNative)(JNIEnv *env, jclass klass, jbyteArray path, jbyteArray key) {
     UNUSED();
     if (!key || (*env)->GetArrayLength(env, key) != 32) { fail(env, "Invalid identity"); return 0; }

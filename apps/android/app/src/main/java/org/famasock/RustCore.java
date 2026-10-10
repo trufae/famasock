@@ -1,6 +1,7 @@
 package org.famasock;
 
 import org.json.JSONObject;
+import android.content.Context;
 import java.nio.charset.StandardCharsets;
 
 /** Owns the handle; shutdown wakes readers before we join calls and free it. */
@@ -11,7 +12,12 @@ final class RustCore implements AutoCloseable {
     private boolean closing;
     private boolean closed;
 
-    RustCore(String path, byte[] key) {
+    private static boolean initialized;
+    private static synchronized void initialize(Context context) {
+        if (!initialized) { initializeNative(context.getApplicationContext()); initialized = true; }
+    }
+    RustCore(Context context, String path, byte[] key) {
+        initialize(context);
         handle = openNative(utf8(path), key);
         if (handle == 0) throw new IllegalStateException("Cannot start networking");
     }
@@ -71,6 +77,7 @@ final class RustCore implements AutoCloseable {
         }
         if (interrupted) Thread.currentThread().interrupt();
     }
+    private static native void initializeNative(Context context);
     private static native long openNative(byte[] path, byte[] key);
     private static native byte[] commandNative(long handle, byte[] json);
     private static native byte[] eventNative(long handle);

@@ -9,6 +9,9 @@ else()
     message(FATAL_ERROR "Unsupported ABI: ${ANDROID_ABI}")
 endif()
 find_program(CARGO cargo REQUIRED)
+get_filename_component(CLANG_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+string(REPLACE "android-" "" ANDROID_API "${ANDROID_PLATFORM}")
+set(RUST_LINKER "${CLANG_DIR}/${RUST_TARGET}${ANDROID_API}-clang")
 set(RUST_DIR "${ROOT}/target/android/${ANDROID_ABI}")
 set(RUST_LIB "${RUST_DIR}/${RUST_TARGET}/release/libfamasock.a")
 file(GLOB_RECURSE RUST_SOURCES CONFIGURE_DEPENDS "${ROOT}/crates/famasock/src/*.rs")
@@ -17,7 +20,7 @@ string(REPLACE "-" "_" TARGET_ENV "${TARGET_ENV}")
 add_custom_command(OUTPUT "${RUST_LIB}"
     COMMAND ${CMAKE_COMMAND} -E env
         "CARGO_TARGET_DIR=${RUST_DIR}"
-        "CARGO_TARGET_${TARGET_ENV}_LINKER=${CMAKE_C_COMPILER}"
+        "CARGO_TARGET_${TARGET_ENV}_LINKER=${RUST_LINKER}"
         "CC_${RUST_TARGET}=${CMAKE_C_COMPILER}"
         "CFLAGS_${RUST_TARGET}=--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT}"
         "AR_${RUST_TARGET}=${CMAKE_AR}"
@@ -28,7 +31,7 @@ add_custom_command(OUTPUT "${RUST_LIB}"
 add_custom_target(rust_core DEPENDS "${RUST_LIB}")
 add_library(famasock_jni SHARED bridge.c)
 add_dependencies(famasock_jni rust_core)
-target_include_directories(famasock_jni PRIVATE "${ROOT}/apps/ios/Shared")
+target_include_directories(famasock_jni SYSTEM PRIVATE "${ROOT}/apps/ios/Shared")
 target_compile_options(famasock_jni PRIVATE -Wall -Wextra -Werror)
 target_link_options(famasock_jni PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(famasock_jni PRIVATE "${RUST_LIB}" android log dl m)

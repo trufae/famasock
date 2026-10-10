@@ -20,7 +20,7 @@ public class CoreTest {
     private RustCore open(String name, int seed) throws Exception {
         File directory = Files.createTempDirectory(context.getCacheDir().toPath(), name).toFile();
         byte[] key = new byte[32]; Arrays.fill(key, (byte)seed);
-        return new RustCore(directory.getPath(), key);
+        return new RustCore(context, directory.getPath(), key);
     }
     @Test public void identityPersistsEncryptedAndCoreReopens() throws Exception {
         byte[] first = Identity.load(context), second = Identity.load(context);
@@ -30,11 +30,11 @@ public class CoreTest {
         assertFalse(Arrays.equals(first, Arrays.copyOfRange(stored, 12, 44)));
         File path = Files.createTempDirectory(context.getCacheDir().toPath(), "persistent").toFile();
         String id;
-        try (RustCore core = new RustCore(path.getPath(), first)) {
+        try (RustCore core = new RustCore(context, path.getPath(), first)) {
             id = ((JSONObject)core.command(json("op", "status"))).getString("id");
             assertFalse(RustCore.version().isEmpty());
         }
-        try (RustCore core = new RustCore(path.getPath(), second)) {
+        try (RustCore core = new RustCore(context, path.getPath(), second)) {
             assertEquals(id, ((JSONObject)core.command(json("op", "status"))).getString("id"));
         }
         Arrays.fill(first, (byte)0); Arrays.fill(second, (byte)0);

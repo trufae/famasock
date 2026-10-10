@@ -22,7 +22,14 @@ android {
     buildFeatures { buildConfig true }
 }
 
+// Keep the JVM verifier component synchronized with Cargo's locked version.
+def lock = file('../../../Cargo.lock').text
+def verifier = (lock =~ /(?s)name = "rustls-platform-verifier-android"\s+version = "([^"]+)"/)
+if (!verifier.find()) throw new GradleException('Missing Android rustls verifier in Cargo.lock')
+def verifierVersion = verifier.group(1)
+
 dependencies {
+    implementation "org.rustls:rustls-platform-verifier:${verifierVersion}"
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test:rules:1.6.1'
