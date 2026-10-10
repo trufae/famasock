@@ -14,4 +14,5 @@
 <key>FamasockAppGroup</key><string>$(FAMASOCK_APP_GROUP)</string>
 <key>FamasockKeychainGroup</key><string>$(AppIdentifierPrefix)$(FAMASOCK_KEYCHAIN_GROUP)</string>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+<key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 </dict></plist>
