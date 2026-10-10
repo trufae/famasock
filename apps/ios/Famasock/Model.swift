@@ -37,6 +37,8 @@ final class Model: ObservableObject {
     private var observer: NSObjectProtocol?
     private var opening = false
     private var handoff = false
+    private var foreground = true
+    private var starting = false
     var vpnStatusText: String {
         switch vpnStatus {
         case .invalid: return "Not configured"
@@ -51,7 +53,14 @@ final class Model: ObservableObject {
     var vpnRunning: Bool { [.connected, .connecting, .reasserting, .disconnecting].contains(vpnStatus) }
 
     func start() async {
-        guard observer == nil else { return }
+        foreground = true
+        guard !starting else { return }
+        if observer != nil {
+            vpnStatus = manager?.connection.status ?? .disconnected
+            if vpnRunning { refreshVPNStats() } else { await openCore() }
+            return
+        }
+        starting = true; defer { starting = false }
         do {
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
             manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Bundle.main.bundleIdentifier! + ".PacketTunnel" }
@@ -69,8 +78,13 @@ final class Model: ObservableObject {
             await openCore()
         }
     }
+    func suspend() async {
+        foreground = false
+        let previous = core; core = nil; ready = false
+        if let previous { await Task.detached { previous.close() }.value }
+    }
     func openCore() async {
-        guard core == nil && !opening && !handoff && !vpnRunning else { return }
+        guard foreground && core == nil && !opening && !handoff && !vpnRunning else { return }
         opening = true; defer { opening = false }
         do {
             let core = try await Task.detached {
@@ -85,6 +99,10 @@ final class Model: ObservableObject {
                 }
                 throw FamasockError(message: "VPN has not released networking yet")
             }.value
+            guard foreground && !vpnRunning && !handoff else {
+                await Task.detached { core.close() }.value
+                return
+            }
             self.core = core; ready = true
             core.events { [weak self] event in
                 Task { @MainActor [weak self] in
