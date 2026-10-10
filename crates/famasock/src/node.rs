@@ -568,7 +568,7 @@ impl Node {
                 _ = self.cancel.cancelled() => break Ok(()),
                 _ = conn.closed() => break Ok(()),
                 Some(_) = streams.join_next(), if !streams.is_empty() => {},
-                path = paths.next() => { if path.is_some() { self.emit(json!({"event":"path","peer":conn.remote_id().to_string(),"path":connection_path(&conn)})); } },
+                path = paths.next() => { if path.is_some() { self.check_vpn_paths(&conn); self.emit(json!({"event":"path","peer":conn.remote_id().to_string(),"path":connection_path(&conn)})); } },
                 datagram = conn.read_datagram() => { match datagram { Ok(p) => self.receive_packet(&conn, p), Err(_) => break Ok(()) } },
                 stream = conn.accept_bi() => {
                     let (send, recv) = match stream { Ok(s) => s, Err(e) => break Err(e.into()) };
