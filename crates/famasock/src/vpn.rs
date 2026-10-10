@@ -158,6 +158,9 @@ impl Node {
         let session = sessions.get(id).context("VPN session stopped")?;
         ensure!(!session.cancel.is_cancelled(), "VPN stopped");
         session.allowed(packet, true)?;
+        if !session.server {
+            self.check_transport_routes(&session.routes, &session.conn)?;
+        }
         let mut data = Vec::with_capacity(TAG + packet.len());
         data.extend_from_slice(&session.tag);
         data.extend_from_slice(packet);
@@ -191,7 +194,7 @@ impl Node {
         let conn = self.connection(peer).await?;
         let session = crate::pairing::random()?;
         // Never capture an already selected local direct Iroh address.
-        self.check_transport_routes(&routes)?;
+        self.check_transport_routes(&routes, &conn)?;
         let ((mut send, mut recv), info) = Self::request(
             &conn,
             &Request::Vpn {
@@ -245,7 +248,7 @@ impl Node {
             s.cancel.cancel();
         }
     }
-    fn check_transport_routes(&self, routes: &[Ipv4Net]) -> Result<()> {
+    fn check_transport_routes(&self, routes: &[Ipv4Net], conn: &Connection) -> Result<()> {
         // Conservative: reject any route overlapping this device's direct addresses.
         // This keeps LAN Iroh paths outside the packet tunnel as well as public relays.
         for a in &self.endpoint.addr().addrs {
@@ -258,7 +261,28 @@ impl Node {
                 );
             }
         }
+        for path in conn.paths().iter().filter(|p| p.is_selected()) {
+            if let iroh::TransportAddr::Ip(addr) = path.remote_addr()
+                && let std::net::IpAddr::V4(ip) = addr.ip()
+            {
+                ensure!(
+                    !routes.iter().any(|r| r.contains(&ip)),
+                    "VPN route captures the selected peer transport address"
+                );
+            }
+        }
         Ok(())
+    }
+    pub(crate) fn check_vpn_paths(&self, conn: &Connection) {
+        for session in self.vpn.lock().unwrap().values() {
+            if !session.server
+                && session.conn.remote_id() == conn.remote_id()
+                && self.check_transport_routes(&session.routes, conn).is_err()
+            {
+                session.cancel.cancel();
+                self.emit(json!({"event":"vpn_error","error":"Transport path entered a VPN route; session stopped to prevent a routing loop"}));
+            }
+        }
     }
     pub(crate) async fn accept_vpn(
         self: &Arc<Self>,
