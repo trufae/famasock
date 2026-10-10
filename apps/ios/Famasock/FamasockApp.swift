@@ -82,7 +82,8 @@ struct AddPeerView: View {
         let normalized = data.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         let padded = normalized + String(repeating: "=", count: (4 - normalized.count % 4) % 4)
         guard let decoded = Data(base64Encoded: padded), let value = try? JSONSerialization.jsonObject(with: decoded) as? [String: Any] else { return "The core will validate this invitation." }
-        return "\(value["name"] as? String ?? "Device")\nCheck the requesting identity on the computer before approving."
+        let endpoint = (value["addr"] as? [String: Any])?["id"] as? String ?? "Unknown identity"
+        return "\(value["name"] as? String ?? "Device")\n\(endpoint)\nCheck the requesting identity on the computer before approving."
     }
 }
 struct PeerView: View {

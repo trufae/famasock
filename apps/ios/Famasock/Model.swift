@@ -50,7 +50,7 @@ final class Model: ObservableObject {
                     if !self.vpnRunning { await self.openCore() }
                 }
             }
-            if !vpnRunning { await openCore() }
+            if !vpnRunning { await openCore() } else { refreshVPNStats() }
         } catch { self.error = error.localizedDescription }
     }
     func openCore() async {
@@ -123,7 +123,12 @@ final class Model: ObservableObject {
         do {
             try session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
                 guard let data, let text = String(data: data, encoding: .utf8) else { return }
-                Task { @MainActor [weak self] in self?.vpnStats = text }
+                Task { @MainActor [weak self] in
+                    self?.vpnStats = text
+                    if let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        self?.peers = (value["peers"] as? [[String: Any]] ?? []).compactMap(Peer.init)
+                    }
+                }
             }
         } catch { self.error = error.localizedDescription }
     }
