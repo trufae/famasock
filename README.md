@@ -61,6 +61,9 @@ famasock stop TUNNEL_ID
 famasock disconnect home
 ```
 
+For connectivity diagnostics, `famasock serve --relay-only` disables direct UDP
+and requires encrypted relay transport. Normal mode prefers direct connections.
+
 Multiple peers and tunnels can run together. Local listeners bind loopback only.
 A dropped TCP stream is never replayed. A new TCP connection may establish a new
 Iroh session after disconnection. Tunnels are runtime configuration: restart them

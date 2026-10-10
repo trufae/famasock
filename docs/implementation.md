@@ -28,9 +28,11 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 - [x] CI: Linux/macOS tests, daemon smoke test, real TUN namespace test,
       unsigned iOS device/simulator builds.
 - [x] Linux/macOS CLI and real Linux kernel TUN traffic: CI run 38061528300.
-- [ ] Complete and record a green iOS device/simulator build.
+- [x] Unsigned native iOS device and simulator builds: CI run 38062301413;
+      app/extension bundles uploaded. Subsequent lifecycle changes require rerun.
 - [ ] Physical-device signing, Keychain/App Group access and background VPN tests.
-- [ ] Wi-Fi/cellular/NAT transitions and forced public-relay fallback measurements.
+- [ ] Wi-Fi/cellular/NAT transitions and physical relay fallback measurements.
+- [ ] Forced public relay test in CI (development environment relay unreachable).
 
 The development container permits loopback TCP/UDP but denies AF_UNIX creation
 and has no TUN/CAP_NET_ADMIN. Thus local tests validate real QUIC/TCP/datagrams;
