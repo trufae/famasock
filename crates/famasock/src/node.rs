@@ -75,6 +75,12 @@ impl Reply {
         Ok(self.data)
     }
 }
+struct PendingGuard<'a>(&'a Mutex<HashMap<String, Pending>>, String);
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
 struct Pending {
     peer: Peer,
     answer: oneshot::Sender<bool>,
@@ -211,6 +217,7 @@ impl Node {
     }
     pub fn cancel_invitation(&self, id: &str) {
         self.invitations.lock().unwrap().remove(id);
+        self.pending.lock().unwrap().remove(id);
     }
     pub fn pending(&self) -> Value {
         Value::Array(self.pending.lock().unwrap().iter().map(|(id,p)| json!({"id":id,"name":p.peer.name,"device":p.peer.device,"peer":p.peer.addr.id.to_string()})).collect())
@@ -375,6 +382,7 @@ impl Node {
                 answer: tx,
             },
         );
+        let _pending = PendingGuard(&self.pending, id.clone());
         self.emit(
             json!({"event":"pair_request","id":id,"name":name,"peer":conn.remote_id().to_string()}),
         );
@@ -526,34 +534,41 @@ impl Node {
     ) {
         let result = async {
             let request: Request = timeout(SETUP_TIMEOUT, wire::read(&mut recv)).await??;
-            let p = self.peer(&conn.remote_id().to_string())?;
+            let p = Self::checked(&mut send, self.peer(&conn.remote_id().to_string())).await?;
             match request {
                 Request::Services => { wire::write(&mut send, &Reply::ok(json!({"services":p.policy.services.keys().collect::<Vec<_>>(),"socks":!p.policy.socks_networks.is_empty(),"reverse_ports":p.policy.reverse_ports,"vpn":p.policy.vpn}))).await?; send.finish()?; }
                 Request::Tcp { service } => {
-                    let destination = p.policy.services.get(&service).context("service not authorized")?;
-                    let tcp = timeout(SETUP_TIMEOUT, TcpStream::connect(destination)).await??;
+                    let tcp = Self::checked(&mut send, async {
+                        let destination = p.policy.services.get(&service).context("service not authorized")?;
+                        Ok(timeout(SETUP_TIMEOUT, TcpStream::connect(destination)).await??)
+                    }.await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
                 }
                 Request::Socks { host, port } => {
-                    let tcp = crate::socks::connect_allowed(&p.policy, &host, port).await?;
+                    let tcp = Self::checked(&mut send, crate::socks::connect_allowed(&p.policy, &host, port).await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
                 }
                 Request::Reverse { port, id } => {
-                    ensure!(port != 0 && p.policy.reverse_ports.contains(&port), "reverse listener not authorized");
-                    ensure!(id.len() == 43, "invalid tunnel ID");
-                    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+                    let listener = Self::checked(&mut send, async {
+                        ensure!(port != 0 && p.policy.reverse_ports.contains(&port), "reverse listener not authorized");
+                        ensure!(id.len() == 43, "invalid tunnel ID");
+                        Ok(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?)
+                    }.await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return self.reverse_listener(conn.clone(), listener, id, send, recv).await;
                 }
                 Request::ReverseConnect { id } => {
-                    let target = self.reverse.lock().unwrap().get(&id).cloned().context("reverse rule no longer active")?;
-                    ensure!(target.peer == conn.remote_id().to_string(), "wrong reverse peer");
-                    ensure!(!target.cancel.is_cancelled(), "reverse stopped");
-                    let tcp = timeout(SETUP_TIMEOUT, TcpStream::connect(target.target)).await??;
+                    let (tcp, stop) = Self::checked(&mut send, async {
+                        let target = self.reverse.lock().unwrap().get(&id).cloned().context("reverse rule no longer active")?;
+                        ensure!(target.peer == conn.remote_id().to_string(), "wrong reverse peer");
+                        ensure!(!target.cancel.is_cancelled(), "reverse stopped");
+                        let tcp = timeout(SETUP_TIMEOUT, TcpStream::connect(target.target)).await??;
+                        Ok((tcp, target.cancel))
+                    }.await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
-                    return crate::tcp::bridge(tcp, send, recv, target.cancel).await;
+                    return crate::tcp::bridge(tcp, send, recv, stop).await;
                 }
                 Request::Vpn { routes, session } => return self.accept_vpn(conn.clone(), p.policy, routes, session, send, recv).await,
                 Request::Pair { .. } => bail!("already paired"),
@@ -564,6 +579,17 @@ impl Node {
         if let Err(e) = result {
             self.emit(json!({"event":"stream_error","peer":conn.remote_id().to_string(),"error":e.to_string()}));
         }
+    }
+    pub(crate) async fn checked<T>(send: &mut SendStream, result: Result<T>) -> Result<T> {
+        if let Err(e) = &result {
+            let reply = Reply {
+                error: Some(e.to_string().chars().take(512).collect()),
+                data: Value::Null,
+            };
+            let _ = timeout(SETUP_TIMEOUT, wire::write(send, &reply)).await;
+            let _ = send.finish();
+        }
+        result
     }
     pub(crate) async fn request(conn: &Connection, req: &Request) -> Result<(Streams, Value)> {
         timeout(SETUP_TIMEOUT, async {
