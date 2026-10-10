@@ -140,7 +140,14 @@ impl Node {
             .max_concurrent_bidi_streams(64u32.into())
             .max_concurrent_uni_streams(0u32.into())
             .stream_receive_window(256_000u32.into())
-            .receive_window(4_000_000u32.into())
+            .receive_window(
+                (if cfg!(target_os = "ios") {
+                    1_000_000u32
+                } else {
+                    4_000_000u32
+                })
+                .into(),
+            )
             .max_idle_timeout(Some(Duration::from_secs(60).try_into()?))
             .keep_alive_interval(Duration::from_secs(20))
             .build();
@@ -183,7 +190,11 @@ impl Node {
             cancel: CancellationToken::new(),
             tasks: TaskTracker::new(),
             events,
-            connection_limit: Arc::new(Semaphore::new(32)),
+            connection_limit: Arc::new(Semaphore::new(if cfg!(target_os = "ios") {
+                8
+            } else {
+                32
+            })),
             stream_limit: Arc::new(Semaphore::new(128)),
         });
         let n = node.clone();
@@ -466,6 +477,11 @@ impl Node {
             invite.addr.id != self.endpoint.id(),
             "cannot pair with self"
         );
+        let _permit = self
+            .connection_limit
+            .clone()
+            .try_acquire_owned()
+            .context("connection limit reached")?;
         let conn = timeout(
             SETUP_TIMEOUT,
             self.endpoint.connect(invite.addr.clone(), wire::ALPN),
@@ -525,6 +541,11 @@ impl Node {
         {
             return Ok(c);
         }
+        let permit = self
+            .connection_limit
+            .clone()
+            .try_acquire_owned()
+            .context("connection limit reached")?;
         let conn = timeout(SETUP_TIMEOUT, self.endpoint.connect(p.addr, wire::ALPN)).await??;
         // Policy may have been revoked while dialing.
         if self.peer(&id).is_err() {
@@ -535,6 +556,7 @@ impl Node {
         let n = self.clone();
         let c = conn.clone();
         self.tasks.spawn(async move {
+            let _permit = permit;
             let _ = n.connection_loop(c).await;
         });
         Ok(conn)
