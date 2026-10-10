@@ -9,6 +9,7 @@ async fn socks_connect_remote_dns_and_destination_denial() {
     let (_a, _b, home, phone) = nodes().await;
     let home_id = pair(&home, &phone).await;
     let (addr, echo) = echo().await;
+    let (ipv6, echo6) = echo_on("[::1]:0").await;
     let id = phone
         .socks(&home_id, "127.0.0.1:0".parse().unwrap())
         .await
@@ -21,13 +22,17 @@ async fn socks_connect_remote_dns_and_destination_denial() {
     );
     let policy = Policy {
         socks_networks: vec!["127.0.0.1/32".parse().unwrap(), "::1/128".parse().unwrap()],
-        socks_ports: vec![addr.port()],
+        socks_ports: vec![addr.port(), ipv6.port()],
         ..Default::default()
     };
     home.set_policy(&phone.endpoint.id().to_string(), policy)
         .unwrap();
-    for host in ["localhost", "127.0.0.1"] {
-        let mut socket = Socks5Stream::connect(listen, host.into(), addr.port(), Config::default())
+    for (host, port) in [
+        ("localhost", addr.port()),
+        ("127.0.0.1", addr.port()),
+        ("::1", ipv6.port()),
+    ] {
+        let mut socket = Socks5Stream::connect(listen, host.into(), port, Config::default())
             .await
             .unwrap();
         socket.write_all(b"SOCKS via QUIC").await.unwrap();
@@ -57,4 +62,5 @@ async fn socks_connect_remote_dns_and_destination_denial() {
     phone.shutdown().await;
     home.shutdown().await;
     echo.abort();
+    echo6.abort();
 }
