@@ -107,10 +107,12 @@ async fn rpc(path: &Path, command: &Command) -> Result<Value> {
     let mut socket = UnixStream::connect(path.join("control.sock"))
         .await
         .context("start `famasock serve` first (same --state)")?;
-    wire::write(&mut socket, command).await?;
-    let result: Value =
-        tokio::time::timeout(std::time::Duration::from_secs(140), wire::read(&mut socket))
-            .await??;
+    wire::write_limit(&mut socket, command, wire::MAX_CONTROL).await?;
+    let result: Value = tokio::time::timeout(
+        std::time::Duration::from_secs(140),
+        wire::read_limit(&mut socket, wire::MAX_CONTROL),
+    )
+    .await??;
     if let Some(e) = result.get("error").and_then(Value::as_str) {
         anyhow::bail!("{e}");
     }
@@ -141,9 +143,9 @@ async fn serve(path: &Path, name: &str, offline: bool) -> Result<()> {
             accepted = listener.accept(), if clients.len() < 16 => {
                 let (mut socket,_) = accepted?; let node = node.clone();
                 clients.spawn(async move {
-                    let command: Command = tokio::time::timeout(wire::SETUP_TIMEOUT,wire::read(&mut socket)).await??;
+                    let command: Command = tokio::time::timeout(wire::SETUP_TIMEOUT,wire::read_limit(&mut socket, wire::MAX_CONTROL)).await??;
                     let result = match node.command(command).await { Ok(v) => json!({"data":v}), Err(e) => json!({"error":e.to_string()}) };
-                    wire::write(&mut socket,&result).await?; Ok::<_,anyhow::Error>(())
+                    wire::write_limit(&mut socket,&result, wire::MAX_CONTROL).await?; Ok::<_,anyhow::Error>(())
                 });
             }
         }
