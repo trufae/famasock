@@ -15,12 +15,25 @@ async fn socks_connect_remote_dns_and_destination_denial() {
         .await
         .unwrap();
     let listen = local_listener(&phone, &id);
+    let socket = Socks5Stream::connect(listen, "localhost".into(), addr.port(), Config::default())
+        .await
+        .unwrap();
+    drop(socket);
+    home.set_policy(
+        &phone.endpoint.id().to_string(),
+        Policy {
+            restricted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(
         Socks5Stream::connect(listen, "localhost".into(), addr.port(), Config::default())
             .await
             .is_err()
     );
     let policy = Policy {
+        restricted: true,
         socks_networks: vec!["127.0.0.1/32".parse().unwrap(), "::1/128".parse().unwrap()],
         socks_ports: vec![addr.port(), ipv6.port()],
         ..Default::default()

@@ -11,8 +11,10 @@ use tokio::{
 
 pub async fn connect_allowed(policy: &Policy, host: &str, port: u16) -> Result<TcpStream> {
     ensure!(host.len() <= 253 && !host.is_empty(), "invalid hostname");
+    ensure!(port != 0, "invalid destination port");
     ensure!(
-        policy.socks_ports.contains(&port) && !policy.socks_networks.is_empty(),
+        !policy.restricted
+            || (policy.socks_ports.contains(&port) && !policy.socks_networks.is_empty()),
         "SOCKS not authorized"
     );
     timeout(SETUP_TIMEOUT, async {
@@ -25,10 +27,11 @@ pub async fn connect_allowed(policy: &Policy, host: &str, port: u16) -> Result<T
         );
         for a in &addresses {
             ensure!(
-                policy
-                    .socks_networks
-                    .iter()
-                    .any(|net| net.contains(&a.ip())),
+                !policy.restricted
+                    || policy
+                        .socks_networks
+                        .iter()
+                        .any(|net| net.contains(&a.ip())),
                 "SOCKS destination not authorized"
             );
         }

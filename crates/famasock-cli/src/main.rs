@@ -12,7 +12,7 @@ use tokio::{
 };
 
 #[derive(Parser)]
-#[command(version, about = "Secure paired-device networking over Iroh")]
+#[command(name = "famasock", version = famasock::VERSION, about = "Secure paired-device networking over Iroh")]
 struct Cli {
     #[arg(long,global=true,default_value_os_t=default_dir())]
     state: PathBuf,
@@ -68,7 +68,7 @@ enum Cmd {
     Connect {
         peer: String,
     },
-    /// E.g. forward home 2222:ssh (binds loopback).
+    /// E.g. forward home 2222:127.0.0.1:22, or 2222:ssh for a saved service.
     Forward {
         peer: String,
         rule: String,
@@ -132,7 +132,8 @@ async fn serve(path: &Path, name: &str, mode: TransportMode) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&sockpath, std::fs::Permissions::from_mode(0o600))?;
     println!(
-        "Famasock server started\nIdentity: {}\nTransport: Iroh\nStatus: Listening",
+        "Famasock server started\nVersion: {}\nIdentity: {}\nTransport: Iroh\nStatus: Listening",
+        famasock::VERSION,
         node.endpoint.id()
     );
     let mut clients = JoinSet::new();
@@ -163,28 +164,34 @@ async fn serve(path: &Path, name: &str, mode: TransportMode) -> Result<()> {
 // A cancellable nonblocking terminal read: never leave a spawn_blocking stdin
 // worker alive after Ctrl-C or after an invitation expires.
 async fn terminal_line() -> Result<String> {
-    use std::{io::Read, os::unix::fs::OpenOptionsExt};
-    let file = std::fs::OpenOptions::new()
+    use std::{
+        io::{ErrorKind, Read},
+        os::unix::fs::OpenOptionsExt,
+    };
+    let mut file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open("/dev/tty")
         .context("approval requires a terminal; use famasock approve from another terminal")?;
-    let fd = tokio::io::unix::AsyncFd::new(file)?;
     let mut bytes = Vec::new();
     loop {
-        let mut ready = fd.readable().await?;
         let mut chunk = [0; 256];
-        match ready.try_io(|fd| fd.get_ref().read(&mut chunk)) {
-            Ok(Ok(0)) => anyhow::bail!("terminal closed"),
-            Ok(Ok(n)) => {
+        match file.read(&mut chunk) {
+            Ok(0) => anyhow::bail!("terminal closed"),
+            Ok(n) => {
                 bytes.extend_from_slice(&chunk[..n]);
                 ensure!(bytes.len() <= 256, "answer too long");
                 if bytes.contains(&b'\n') {
                     return Ok(String::from_utf8(bytes)?);
                 }
             }
-            Ok(Err(e)) => return Err(e.into()),
-            Err(_) => {}
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                // macOS kqueue cannot register /dev/tty. Retry without blocking
+                // the runtime, so Ctrl-C and invitation expiry can cancel this.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
         }
     }
 }
@@ -271,7 +278,7 @@ async fn main() -> Result<()> {
         }
         Cmd::Pair { accept } => return pair(&cli.state, accept).await,
         Cmd::Version => {
-            println!("famasock {}", env!("CARGO_PKG_VERSION"));
+            println!("famasock {}", famasock::VERSION);
             return Ok(());
         }
         Cmd::Status | Cmd::Peers => Command::Status,
@@ -301,7 +308,9 @@ async fn main() -> Result<()> {
         Cmd::Stop { id } => Command::Stop { id },
         Cmd::StopVpn { id } => Command::StopVpn { id },
         Cmd::Forward { peer, rule } => {
-            let (port, service) = rule.split_once(':').context("expected port:service")?;
+            let (port, service) = rule
+                .split_once(':')
+                .context("expected local-port:host:port or local-port:service")?;
             Command::Forward {
                 peer,
                 listen: SocketAddr::from((Ipv4Addr::LOCALHOST, port.parse::<u16>()?)),

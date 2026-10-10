@@ -16,6 +16,18 @@ use tokio::{
 };
 
 type PacketReader = Arc<AsyncMutex<mpsc::Receiver<Vec<u8>>>>;
+/// Returns a static, NUL-terminated version string. Do not free it.
+#[unsafe(no_mangle)]
+pub extern "C" fn famasock_version() -> *const c_char {
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+}
+
+/// Returns public crypto capabilities as owned JSON; release with string_free.
+#[unsafe(no_mangle)]
+pub extern "C" fn famasock_crypto_info() -> *mut c_char {
+    string(crate::crypto_info())
+}
+
 pub struct Handle {
     runtime: Runtime,
     node: Arc<Node>,

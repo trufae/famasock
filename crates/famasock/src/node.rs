@@ -233,7 +233,7 @@ impl Node {
             .iter()
             .map(|(id, t)| json!({"id":id,"peer":t.peer,"kind":t.kind,"detail":t.detail}))
             .collect();
-        json!({"id":self.endpoint.id().to_string(),"name":store.state.name,"peers":peers,"tunnels":tunnels})
+        json!({"id":self.endpoint.id().to_string(),"name":store.state.name,"version":crate::VERSION,"peers":peers,"tunnels":tunnels})
     }
     pub fn invitation(&self) -> Result<Invitation> {
         let invite = Invitation::new(
@@ -626,24 +626,33 @@ impl Node {
             let request: Request = timeout(SETUP_TIMEOUT, wire::read(&mut recv)).await??;
             let p = Self::checked(&mut send, self.peer(&conn.remote_id().to_string())).await?;
             match request {
-                Request::Services => { wire::write(&mut send, &Reply::ok(json!({"services":p.policy.services.keys().collect::<Vec<_>>(),"socks":!p.policy.socks_networks.is_empty(),"reverse_ports":p.policy.reverse_ports,"vpn":p.policy.vpn}))).await?; send.finish()?; }
+                Request::Services => { wire::write(&mut send, &Reply::ok(json!({"services":p.policy.services.keys().collect::<Vec<_>>(),"restricted":p.policy.restricted,"socks":!p.policy.restricted || !p.policy.socks_networks.is_empty(),"reverse_ports":p.policy.reverse_ports,"vpn":p.policy.vpn}))).await?; send.finish()?; }
                 Request::Tcp { service } => {
                     let tcp = Self::checked(&mut send, async {
-                        let destination = p.policy.services.get(&service).context("service not authorized")?;
+                        let destination = match p.policy.services.get(&service) {
+                            Some(destination) => destination.as_str(),
+                            None => {
+                                ensure!(!p.policy.restricted, "service not authorized");
+                                service.as_str()
+                            }
+                        };
+                        self.emit(json!({"event":"access_request","peer":conn.remote_id().to_string(),"name":p.name,"kind":"tcp","destination":destination}));
                         Ok(timeout(SETUP_TIMEOUT, TcpStream::connect(destination)).await??)
                     }.await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
                 }
                 Request::Socks { host, port } => {
+                    self.emit(json!({"event":"access_request","peer":conn.remote_id().to_string(),"name":p.name,"kind":"socks","host":host,"port":port}));
                     let tcp = Self::checked(&mut send, crate::socks::connect_allowed(&p.policy, &host, port).await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
                 }
                 Request::Reverse { port, id } => {
                     let listener = Self::checked(&mut send, async {
-                        ensure!(port != 0 && p.policy.reverse_ports.contains(&port), "reverse listener not authorized");
+                        ensure!(port != 0 && (!p.policy.restricted || p.policy.reverse_ports.contains(&port)), "reverse listener not authorized");
                         ensure!(id.len() == 43, "invalid tunnel ID");
+                        self.emit(json!({"event":"access_request","peer":conn.remote_id().to_string(),"name":p.name,"kind":"reverse","port":port}));
                         Ok(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?)
                     }.await).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
@@ -749,10 +758,6 @@ impl Node {
         listen: SocketAddr,
         service: String,
     ) -> Result<String> {
-        ensure!(
-            listen.ip().is_loopback(),
-            "local listeners must bind loopback"
-        );
         let p = self.peer(peer)?;
         let listener = TcpListener::bind(listen).await?;
         let (id, cancel) = self.add_tunnel(

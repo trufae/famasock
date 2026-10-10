@@ -3,6 +3,22 @@ use iroh::{EndpointAddr, SecretKey};
 use tokio::io::AsyncWriteExt;
 
 #[test]
+fn saved_policies_default_to_open_paired_access_and_can_enable_restrictions() {
+    let legacy: famasock::store::Policy =
+        serde_json::from_value(serde_json::json!({"services":{"ssh":"127.0.0.1:22"}})).unwrap();
+    assert!(!legacy.restricted);
+    legacy.validate().unwrap();
+    let restricted: famasock::store::Policy = serde_json::from_value(
+        serde_json::json!({"restricted":true,"services":{"ssh":"127.0.0.1:22"}}),
+    )
+    .unwrap();
+    restricted.validate().unwrap();
+    let saved = serde_json::to_vec(&restricted).unwrap();
+    let reloaded: famasock::store::Policy = serde_json::from_slice(&saved).unwrap();
+    assert!(reloaded.restricted);
+}
+
+#[test]
 fn identity_is_persistent_and_exclusive() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path(), "home", None).unwrap();

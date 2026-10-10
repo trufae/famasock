@@ -25,7 +25,10 @@ async fn public_relay_pairs_and_forwards_without_udp() {
         );
         let id = common::pair(&home, &phone).await;
         let (echo_addr, echo) = common::echo().await;
-        let mut policy = Policy::default();
+        let mut policy = Policy {
+            restricted: true,
+            ..Default::default()
+        };
         policy.services.insert("echo".into(), echo_addr.to_string());
         home.set_policy(&phone.endpoint.id().to_string(), policy)
             .unwrap();

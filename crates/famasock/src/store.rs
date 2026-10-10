@@ -14,9 +14,12 @@ use std::{
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
+    /// Paired peers may access any TCP destination unless restrictions are enabled.
+    #[serde(default)]
+    pub restricted: bool,
     #[serde(default)]
     pub services: BTreeMap<String, String>,
-    /// SOCKS destinations must match both a CIDR and a port. DNS is resolved on the exit.
+    /// Restricted SOCKS destinations must match a CIDR and port; DNS resolves on the exit.
     #[serde(default)]
     pub socks_networks: Vec<ipnet::IpNet>,
     #[serde(default)]

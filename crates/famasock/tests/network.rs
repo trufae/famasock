@@ -39,15 +39,131 @@ async fn pairing_requires_approval_and_is_single_use() {
         home.snapshot()["peers"][0]["policy"]["services"],
         serde_json::json!({})
     );
+    assert_eq!(home.snapshot()["peers"][0]["policy"]["restricted"], false);
+    assert_eq!(phone.snapshot()["peers"][0]["policy"]["restricted"], false);
     phone.shutdown().await;
     home.shutdown().await;
 }
+#[tokio::test]
+async fn paired_access_accepts_selected_tcp_destinations_and_reverse_ports_and_logs_them() {
+    let (_a, _b, home, phone) = nodes().await;
+    let home_id = pair(&home, &phone).await;
+    let (target, echo) = echo().await;
+    let mut events = home.subscribe();
+    assert_eq!(phone.services(&home_id).await.unwrap()["restricted"], false);
+    for destination in [target.to_string(), format!("localhost:{}", target.port())] {
+        let id = phone
+            .forward(
+                &home_id,
+                "127.0.0.1:0".parse().unwrap(),
+                destination.clone(),
+            )
+            .await
+            .unwrap();
+        roundtrip(local_listener(&phone, &id), 41).await;
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if event["event"] == "access_request" && event["kind"] == "tcp" {
+                    assert_eq!(event["destination"], destination);
+                    assert_eq!(event["peer"], phone.endpoint.id().to_string());
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        phone.stop(&id);
+    }
+    let reserve = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = reserve.local_addr().unwrap().port();
+    drop(reserve);
+    let id = phone.reverse(&home_id, port, target).await.unwrap();
+    roundtrip(SocketAddr::from(([127, 0, 0, 1], port)), 42).await;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["event"] == "access_request" && event["kind"] == "reverse" {
+                assert_eq!(event["port"], port);
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    phone.stop(&id);
+    home.set_policy(
+        &phone.endpoint.id().to_string(),
+        Policy {
+            restricted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let id = phone
+        .forward(&home_id, "127.0.0.1:0".parse().unwrap(), target.to_string())
+        .await
+        .unwrap();
+    let mut client = TcpStream::connect(local_listener(&phone, &id))
+        .await
+        .unwrap();
+    client.write_all(b"blocked").await.unwrap();
+    client.shutdown().await.unwrap();
+    let mut response = Vec::new();
+    let result = timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+        .await
+        .unwrap();
+    assert!(
+        result.is_err() || response.is_empty(),
+        "restricted peers cannot select arbitrary destinations"
+    );
+    phone.shutdown().await;
+    home.shutdown().await;
+    echo.abort();
+}
+
+#[tokio::test]
+async fn forward_can_listen_on_all_interfaces_and_stops_listener() {
+    let (_a, _b, home, phone) = nodes().await;
+    let home_id = pair(&home, &phone).await;
+    let (target, echo) = echo().await;
+    let result = phone
+        .command(famasock::control::Command::Forward {
+            peer: home_id,
+            listen: "0.0.0.0:0".parse().unwrap(),
+            service: target.to_string(),
+        })
+        .await
+        .unwrap();
+    let id = result["id"].as_str().unwrap();
+    let listen = local_listener(&phone, id);
+    assert!(listen.ip().is_unspecified());
+    roundtrip(SocketAddr::from(([127, 0, 0, 1], listen.port())), 43).await;
+    phone.stop(id);
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if TcpListener::bind(listen).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    phone.shutdown().await;
+    home.shutdown().await;
+    echo.abort();
+}
+
 #[tokio::test]
 async fn concurrent_tcp_half_close_policy_and_revoke() {
     let (_a, _b, home, phone) = nodes().await;
     let home_id = pair(&home, &phone).await;
     let (addr, echo) = echo().await;
-    let mut policy = Policy::default();
+    let mut policy = Policy {
+        restricted: true,
+        ..Default::default()
+    };
     policy.services.insert("echo".into(), addr.to_string());
     home.set_policy(&phone.endpoint.id().to_string(), policy)
         .unwrap();
@@ -82,11 +198,20 @@ async fn reverse_requires_explicit_port_and_stops_listener() {
     let (_a, _b, home, phone) = nodes().await;
     let home_id = pair(&home, &phone).await;
     let (target, echo) = echo().await;
+    home.set_policy(
+        &phone.endpoint.id().to_string(),
+        Policy {
+            restricted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let reserve = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = reserve.local_addr().unwrap().port();
     drop(reserve);
     assert!(phone.reverse(&home_id, port, target).await.is_err());
     let policy = Policy {
+        restricted: true,
         reverse_ports: vec![port],
         ..Default::default()
     };
@@ -124,16 +249,6 @@ async fn multiple_peers_and_shutdown_do_not_cross_authorize() {
     .unwrap();
     pair(&home, &laptop).await;
     assert_eq!(home.snapshot()["peers"].as_array().unwrap().len(), 2);
-    assert!(
-        phone
-            .forward(
-                &home.endpoint.id().to_string(),
-                "0.0.0.0:0".parse().unwrap(),
-                "ssh".into()
-            )
-            .await
-            .is_err()
-    );
     assert_eq!(
         laptop
             .services(&home.endpoint.id().to_string())
@@ -258,7 +373,10 @@ async fn simultaneous_peers_keep_permissions_and_revocation_isolated() {
     let home_id = pair(&home, &phone).await;
     pair(&home, &laptop).await;
     let (addr, echo) = echo().await;
-    let mut policy = Policy::default();
+    let mut policy = Policy {
+        restricted: true,
+        ..Default::default()
+    };
     policy.services.insert("echo".into(), addr.to_string());
     home.set_policy(&phone.endpoint.id().to_string(), policy.clone())
         .unwrap();
