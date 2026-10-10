@@ -1,108 +1,197 @@
+<p align="center">
+  <img src="docs/assets/famasock-logo.png" width="176" alt="Famasock — two linked endpoints" />
+</p>
+
 # Famasock
 
-Pair your Android device, iPhone, Linux machine or Mac, then choose TCP destinations on your peers
-through encrypted Iroh connections. Direct QR pairing does not need an email
-account, public IP address or router port forwarding.
+**Reach services on your own devices, wherever you are.**
 
-This is an **early implementation**, under active validation. See
-[the implementation checklist](docs/implementation.md) for tested features and
-remaining work. In particular, full-tunnel VPN, IPv6 VPN, SOCKS UDP and Chatmail
-integration are not implemented. Do not infer physical-iPhone testing from an
-unsigned CI build.
+Famasock connects an Android phone, iPhone, Linux machine or Mac to trusted peers
+through encrypted [Iroh](https://iroh.computer/) connections. Run it on your home
+computer, scan its pairing QR with your phone, approve the request, and open a
+local port that reaches a service at home. You can pair several devices and run
+several tunnels at once.
 
-## No root needed for forwarding or SOCKS
+You do not need an email account, public IP address or router port forwarding.
+Iroh tries a direct connection and can use an encrypted relay when necessary.
+TCP forwarding and SOCKS5 work without root or a VPN interface.
 
-TCP forwarding, reverse forwarding and SOCKS5 use ordinary TCP sockets carried
-by independent encrypted Iroh QUIC streams. Run `serve`, `pair`, `forward`,
-`reverse` and `socks` as your normal user. They do not create or open a TUN device,
-change routes/DNS/firewall rules, or require VPN configuration. Choose unprivileged
-listening ports (for example 2222, 8080 and 1080); operating-system restrictions
-on privileged ports still apply.
+This is an **early implementation**, under active validation. Platform builds and
+automated tests do not replace physical-device testing. See the
+[implementation checklist](docs/implementation.md), [Android guide](docs/android.md)
+and [iOS guide](docs/ios.md) for verification details and limitations.
 
-The IP-layer VPN is separate and optional. Only `vpn` needs a provisioned Linux
-TUN or the iOS Packet Tunnel extension. On iOS, ordinary socket tunnels run in
-the foreground; persistent VPN networking belongs to the extension.
+## What can I do with it?
 
-## Build and run
+| Feature | What it does | Example |
+| --- | --- | --- |
+| TCP forward | A port on this device connects to a destination on a peer. | Reach home SSH at `127.0.0.1:2222`, or a home web app at `127.0.0.1:8080`. |
+| Reverse forward | A port on the peer connects back to a destination on this device. | Let the home machine reach your laptop's development server. |
+| SOCKS5 proxy | SOCKS-aware applications send TCP connections through a chosen peer; the peer resolves destination names. | Use `curl` through your home network without changing system routes. |
+| Split-route VPN | Selected private IPv4 networks use a paired Linux peer through a system TUN interface. | Reach `192.168.1.0/24` from a phone after configuring the Linux gateway. |
+| Peer management | Pair, rename, disconnect, restrict or revoke trusted devices. | Keep separate home, laptop and phone peers. |
 
-Install stable Rust (minimum 1.91; development/CI currently uses 1.99):
+Pairing establishes trust; it does not automatically create tunnels or redirect
+traffic. After pairing, choose one of the connection types above.
+
+## Platforms
+
+| Platform | Interface | Background networking |
+| --- | --- | --- |
+| Android 8.0+ | Native app in [`apps/android`](apps/android): QR scanner, peers, tunnels and VPN | A foreground service runs while its notification is active. |
+| iPhone / iPad, iOS 17+ | Native SwiftUI app in [`apps/ios`](apps/ios): QR scanner, peers, tunnels, TCP diagnostics and VPN | Ordinary socket tunnels require the app in the foreground; VPN runs in a Packet Tunnel extension. |
+| Linux | `famasock` CLI and daemon | Keep `serve` running, optionally as a user systemd service. Supports a pre-provisioned VPN TUN. |
+| macOS | `famasock` CLI and daemon | Keep `serve` running. CLI VPN is not implemented. |
+
+The mobile apps and CLI share the same Rust networking and authorization core.
+Android stores the identity encrypted with a Keystore key; iOS uses Keychain.
+Saved peers persist. Active tunnel configurations must be recreated after a
+networking restart.
+
+## Quick start: phone → home computer
+
+### 1. Build the home daemon
+
+Install stable Rust (minimum 1.91), then:
 
 ```sh
-cargo build --workspace --locked
-cargo test --workspace --locked
+git clone https://github.com/trufae/famasock.git
+cd famasock
 cargo install --path crates/famasock-cli --locked
 famasock serve --name home
 ```
 
-In another terminal on the same machine:
+Leave that terminal running. Commands in other terminals talk to this daemon;
+they do not launch another copy of the identity.
+
+By default, state lives in `$XDG_STATE_HOME/famasock` or
+`~/.local/state/famasock`. To use a different directory, pass `--state DIRECTORY`
+to **every** command, including `serve`.
+
+### 2. Install the phone app
+
+- **Android:** open `apps/android` in Android Studio, or follow the
+  [command-line build and APK installation instructions](docs/android.md#build).
+  The APK supports arm64 and x86_64. Start networking in the app.
+- **iOS:** open `apps/ios/Famasock.xcodeproj`, configure your signing team and
+  entitlements, then run on your device. See [iOS signing/setup](docs/ios.md).
+
+There is no App Store or Play Store distribution configured in this repository.
+Android CI uploads a debug APK; iOS CI produces unsigned bundles for validation.
+
+### 3. Pair once
+
+In a second terminal on the home computer:
 
 ```sh
 famasock pair
 ```
 
-Scan the terminal QR in the native iOS app. Confirm the invitation on the phone,
-then check the requesting device identity and type `y` in the terminal. The
-invitation expires after five minutes and is consumed by the first valid scan,
-even if subsequently rejected. After approval, paired devices can open TCP and
-SOCKS destinations and create reverse forwards without additional grants.
-Requests are logged by the receiving device. This also applies to saved peers
-whose policy has no `restricted` field. Unpaired devices cannot open tunnels.
+Scan the displayed QR in the phone app. Review and confirm the invitation, then
+verify the requesting device identity in the home terminal and type `y` to approve.
+Android can also accept a pasted invitation or display its own QR to another peer.
 
-```sh
-famasock peers
-# Optional names for frequently used destinations:
-famasock allow iPhone ssh 127.0.0.1:22
-famasock allow iPhone web 127.0.0.1:8080
-```
+Invitations expire after five minutes and are single-use. If an invitation is
+consumed or rejected, create a new one. Pairing can be cancelled with
+`famasock cancel-pair` or the Android **Cancel outgoing pairing** control.
 
-Names are case-sensitive and need to be unique when used in commands. An endpoint
-ID always identifies a peer unambiguously. `--state DIRECTORY` selects a separate
-identity/state directory; every command controlling a daemon must use that same
-path. The default is `$XDG_STATE_HOME/famasock` or `~/.local/state/famasock`.
-The daemon owns the identity; commands use its owner-only Unix socket.
+### 4. Open a service
 
-## Linux/macOS client
+Suppose the home computer has SSH on `127.0.0.1:22`. In the phone app, choose the
+`home` peer and create a **TCP forward**:
 
-Run a second daemon with its own state directory on the client machine. Accept the
-server invitation on standard input so the secret does not enter shell history:
+| Setting | Value |
+| --- | --- |
+| Local listening port | `2222` |
+| Remote destination / service | `127.0.0.1:22` |
+| Listen on all interfaces | Off |
+
+Now point an SSH client **on the phone** at `127.0.0.1`, port `2222`. Famasock carries
+that TCP connection to SSH on the home computer. The destination's `127.0.0.1`
+means the **home computer**; the SSH client's `127.0.0.1` means the **phone**.
+
+For a home web app, use a local port such as `8080` and the remote destination
+where that app listens. Open `http://127.0.0.1:8080` in a browser on the phone.
+On iOS, switching away from Famasock suspends ordinary socket tunnels; use its
+built-in TCP diagnostics for foreground checks or the separately configured VPN
+for background network access. Android's notification keeps its service active.
+
+Stop an individual tunnel in the app when finished. Android's **Stop all
+networking** button or notification **Stop** action closes all socket tunnels and
+VPN. On iOS, stop VPN separately in its VPN screen.
+
+## Use a Linux or Mac client
+
+On the client, start another daemon with its own state directory:
 
 ```sh
 famasock serve --name laptop
-# In another terminal; paste the invitation URI, then press Return:
-famasock pair --accept -
-famasock connect home
-famasock forward home 2222:127.0.0.1:22
-famasock socks home --listen 127.0.0.1:1080
-famasock status
-famasock stop TUNNEL_ID
-famasock disconnect home
 ```
 
-For connectivity diagnostics, `famasock serve --relay-only` disables direct UDP
-and requires encrypted relay transport. Normal mode prefers direct connections.
+In another client terminal, accept the home invitation on standard input so its
+secret does not enter shell history. Paste the full invitation URI and press Return:
 
-Multiple peers and tunnels can run together. TCP forwards bind the requested
-listening address; the CLI defaults to loopback and iOS offers an all-interfaces
-toggle (`0.0.0.0`) for connections from other devices. SOCKS and reverse listeners
-bind loopback only.
-A dropped TCP stream is never replayed. A new TCP connection may establish a new
-Iroh session after disconnection. Tunnels are runtime configuration: restart them
-after a daemon restart. `status` reports tunnel IDs and errors are emitted by the
-daemon and by the app's event stream.
+```sh
+famasock pair --accept -
+# Approve the request on the home computer, then:
+famasock peers
+famasock connect home
+famasock forward home 2222:127.0.0.1:22
+ssh -p 2222 user@127.0.0.1
+```
 
-`famasock --version` (or `famasock version`) shows the CLI's bundled Rust core
-version without starting a daemon. `serve` prints its version at startup, and
-`famasock status` includes the running daemon's version, so it also works when
-the installed CLI has been updated but the daemon has not been restarted. The
-iOS peer list shows the app version/build and bundled Rust core version under
-**About Famasock**.
+Names are case-sensitive and must be unique to select a peer by name. An endpoint
+ID identifies a peer unambiguously. To define a reusable destination name, run
+this **on the machine hosting the service**:
 
-## Optional access restrictions
+```sh
+famasock allow laptop ssh 127.0.0.1:22
+```
 
-Paired access is open by default. To restrict it, set `"restricted": true` in a
-peer's policy. Policies describe what a peer may access **on the machine storing that policy**.
-Use `famasock policy PEER policy.json` to replace a peer's inbound policy. This
-closes existing sessions so removed grants take effect immediately.
+### Reverse forward
+
+Run this on the laptop to open a loopback listener on the home computer. Traffic
+arriving at home port `8080` reaches the laptop's development server on port `3000`:
+
+```sh
+famasock reverse home 8080:127.0.0.1:3000
+```
+
+### SOCKS5
+
+```sh
+famasock socks home --listen 127.0.0.1:1080
+curl --socks5-hostname 127.0.0.1:1080 https://example.com/
+```
+
+Only applications configured to use that proxy send traffic through it. SOCKS
+supports TCP CONNECT, IPv4/IPv6 destinations and remote DNS. UDP ASSOCIATE is not
+implemented.
+
+### Inspect and stop
+
+```sh
+famasock status                 # peer connections and active tunnel IDs
+famasock stop TUNNEL_ID
+famasock disconnect home
+famasock rename home home-server
+famasock revoke home-server     # removes trust and terminates sessions
+famasock --version
+```
+
+A disconnected TCP stream is never replayed. A new TCP connection may establish
+a new Iroh session. For relay diagnostics, `famasock serve --relay-only` disables
+direct UDP and requires relay transport.
+
+## Trust and access restrictions
+
+**Pair only devices you trust.** By default, a paired peer can open TCP and SOCKS
+destinations and create reverse forwards on your device without another prompt.
+Requests are logged by the receiving device. Unpaired devices cannot open tunnels.
+
+Policies describe what a peer may access **on the device storing the policy**.
+To restrict a peer, save a policy such as this and apply it with
+`famasock policy PEER policy.json`:
 
 ```json
 {
@@ -114,66 +203,35 @@ closes existing sessions so removed grants take effect immediately.
 }
 ```
 
-Reverse forwarding listens on the peer and connects back to this device. With
-the default open access, no port grant is needed; a restricted peer must be
-granted the listening port:
+Saving a policy closes existing sessions so removed grants take effect immediately.
+With SOCKS restrictions enabled, both network and port must be granted; every
+resolved address is checked before connecting to that numeric address. A saved
+policy with no `restricted` field also uses the default open paired access.
 
-```sh
-# Runs on the laptop. A home listener at 127.0.0.1:8080 connects back to
-# the laptop's 127.0.0.1:3000, over the existing authenticated connection.
-famasock reverse home 8080:127.0.0.1:3000
-```
+Local forwarding listeners default to loopback. The mobile all-interfaces option
+(`0.0.0.0`) lets other LAN devices use that port without local authentication;
+enable it only when intended. SOCKS and reverse listeners remain loopback-only.
+Use unprivileged listening ports, such as 2222, 8080 or 1080.
 
-SOCKS supports CONNECT, IPv4, IPv6 destinations and remote DNS resolution. With
-restrictions enabled, both the destination network and port must be granted.
-Every resolved DNS address is
-checked before connecting to that numeric address. A SOCKS listener does not
-redirect system traffic; applications must explicitly use it (for example,
-`curl --socks5-hostname 127.0.0.1:1080 ...`). VPN still needs explicit interface and
-route configuration.
+## Optional VPN setup
 
-```sh
-famasock rename PEER new-name
-famasock revoke PEER       # removes trust and terminates active sessions
-famasock pending
-famasock approve REQUEST_ID --reject
-famasock cancel-pair       # cancels an outgoing pairing attempt
-```
+VPN needs more setup than TCP forwarding: a Linux peer with an explicit VPN policy,
+a pre-provisioned TUN, packet forwarding and return routes. Follow
+[the Linux VPN setup guide](docs/vpn.md), then select that peer and the allowed
+private IPv4 routes in the phone's VPN screen.
 
-## iOS
+The current transport uses QUIC datagrams with MTU 1100. Android uses `VpnService`;
+iOS uses `NEPacketTunnelProvider`. Only the selected private networks use this
+split tunnel. Android leaves DNS on the system network and excludes Famasock's
+own transport sockets from VPN.
 
-Open `apps/ios/Famasock.xcodeproj`. The SwiftUI application includes peer
-management, a native camera scanner, forwarding and SOCKS controls, and a VPN
-screen backed by an `NEPacketTunnelProvider`. Networking and authorization remain
-in Rust. See [iOS build/signing instructions](docs/ios.md).
-
-Ordinary forwarding/SOCKS are foreground-only on iOS. The Packet Tunnel extension
-owns the Rust endpoint during VPN use. The app closes its endpoint first and
-reopens it after the extension releases the shared state lock. The long-term key
-is held in a shared Keychain access group, not in the shared filesystem.
-
-## Android
-
-Open `apps/android` in Android Studio, or use its Gradle wrapper. The native app
-supports Android 8.0+ on arm64 and x86_64, QR/paste pairing, multiple peers,
-TCP/reverse forwards, SOCKS5, inbound policy editing and private IPv4 split VPN.
-It uses the same Rust endpoint as the CLI and iOS app through a small JNI bridge.
-
-A foreground notification keeps networking active after leaving the screen;
-its **Stop** action closes all tunnels. Identity is encrypted with an Android
-Keystore key and excluded from backup. VPN uses Android's consent screen and
-`VpnService`; it does not need root. See [Android build and testing](docs/android.md).
-
-## VPN
-
-The current VPN carries IPv4 packets over QUIC datagrams with MTU 1100. It supports
-explicitly allowed **private split routes**. Linux uses pre-provisioned TUN devices;
-iOS uses the system Packet Tunnel interface. Linux setup, return routing and
-cleanup are described in [docs/vpn.md](docs/vpn.md). macOS CLI VPN is not implemented.
+Full-tunnel VPN, IPv6 VPN, macOS CLI VPN and automatic VPN reconnect are not
+implemented. Chatmail account/contact/control integration is also not implemented;
+QR pairing works independently of it.
 
 ## Start at login on Linux
 
-The example is a **user** systemd service; ordinary forwarding needs no root:
+The example service runs as your normal user; ordinary socket tunnels need no root:
 
 ```sh
 mkdir -p ~/.local/state/famasock ~/.config/systemd/user
@@ -182,11 +240,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now famasock
 ```
 
-Edit the service if Cargo installs binaries somewhere other than `~/.cargo/bin`,
-or if you set a custom state directory. For a headless server, configure user
-lingering separately according to your system's policy.
+Edit the service if Cargo installs binaries outside `~/.cargo/bin` or you use a
+custom state directory. Configure user lingering separately for a headless server.
 
-## Development
+## Development and testing
 
 ```sh
 cargo fmt --all --check
@@ -198,9 +255,13 @@ python3 scripts/cli-smoke.py
 sudo python3 scripts/vpn-kernel.py
 ```
 
-The local network tests use actual Iroh QUIC connections and TCP sockets, with
-external relays disabled. CI additionally builds Linux/macOS and unsigned iOS
-device/simulator targets. The kernel test creates and removes isolated network
-namespaces, forwards ICMP and a 130 KB TCP response over actual TUN devices, then
-checks revocation. libc is pinned to 0.2.188 while upstream Iroh dependencies
-migrate their Apple mobile declarations removed in libc 0.2.190.
+Local core tests use real Iroh QUIC connections and TCP sockets with external
+relays disabled. CI additionally checks public-relay transport, Linux kernel TUN
+traffic, Linux/macOS CLI behavior, unsigned iOS builds and Android native builds,
+lint and emulator integration tests. Android build/test commands are in
+[docs/android.md](docs/android.md#verification). Physical camera, mobile VPN and
+Wi-Fi/cellular transition testing remain separate validation tasks.
+
+The workspace pins libc 0.2.188 while upstream Iroh dependencies migrate Apple
+mobile declarations removed in libc 0.2.190. The shared logo and its platform
+exports are documented in [docs/assets](docs/assets/README.md).
