@@ -14,7 +14,7 @@ def rpc(root, command):
                 if not part: raise RuntimeError('control socket closed')
                 out+=part
             return out
-        assert read(1)==b'\x01'; size=struct.unpack('!I',read(4))[0]; assert size<=8192
+        assert read(1)==b'\x01'; size=struct.unpack('!I',read(4))[0]; assert size<=1024*1024
         reply=json.loads(read(size))
         if 'error' in reply: raise RuntimeError(reply['error'])
         return reply['data']
@@ -45,9 +45,34 @@ with tempfile.TemporaryDirectory() as tmp:
         subprocess.run([binary,'--state',str(roots[0]),'allow','phone','ssh','127.0.0.1:22'],check=True,stdout=subprocess.DEVNULL)
         services=json.loads(subprocess.check_output([binary,'--state',str(roots[1]),'connect','home']))
         assert services['services']==['ssh']
+        with socket.socket() as target, socket.socket() as reserve:
+            target.bind(('127.0.0.1',0)); target.listen(); target.settimeout(10)
+            reserve.bind(('127.0.0.1',0)); remote_port=reserve.getsockname()[1]; reserve.close()
+            rpc(roots[0],{'op':'policy','peer':'phone','policy':{'reverse_ports':[remote_port]}})
+            rule=f"{remote_port}:localhost:{target.getsockname()[1]}"
+            reverse=json.loads(subprocess.check_output([binary,'--state',str(roots[1]),'reverse','home',rule]))
+            with socket.create_connection(('127.0.0.1',remote_port),timeout=10) as source:
+                source.sendall(b'cli reverse'); source.shutdown(socket.SHUT_WR)
+                accepted,_=target.accept()
+                with accepted:
+                    accepted.settimeout(10)
+                    payload=b''
+                    while True:
+                        part=accepted.recv(1024)
+                        if not part: break
+                        payload+=part
+                    assert payload==b'cli reverse'
+                    accepted.sendall(b'reply'); accepted.shutdown(socket.SHUT_WR)
+                payload=b''
+                while True:
+                    part=source.recv(1024)
+                    if not part: break
+                    payload+=part
+                assert payload==b'reply'
+            subprocess.run([binary,'--state',str(roots[1]),'stop',reverse['id']],check=True,stdout=subprocess.DEVNULL)
         subprocess.run([binary,'--state',str(roots[0]),'revoke','phone'],check=True,stdout=subprocess.DEVNULL)
         assert rpc(roots[0],{'op':'status'})['peers']==[]
-        print('CLI daemon, pairing, permissions, services and revocation: PASS')
+        print('CLI daemon, pairing, permissions, reverse TCP and revocation: PASS')
     finally:
         for p in processes: p.terminate()
         for p in processes:
