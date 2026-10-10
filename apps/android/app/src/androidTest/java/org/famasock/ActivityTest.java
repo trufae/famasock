@@ -1,6 +1,9 @@
 package org.famasock;
 
 import android.content.Intent;
+import android.Manifest;
+import android.os.Build;
+import androidx.test.rule.GrantPermissionRule;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -13,6 +16,8 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class ActivityTest {
+    @Rule public final GrantPermissionRule notifications = GrantPermissionRule.grant(
+            Build.VERSION.SDK_INT >= 33 ? new String[]{Manifest.permission.POST_NOTIFICATIONS} : new String[0]);
     @Rule public final ServiceTestRule serviceRule = new ServiceTestRule();
 
     @Test public void notificationStopWorksWhileActivityRemainsBound() throws Exception {
