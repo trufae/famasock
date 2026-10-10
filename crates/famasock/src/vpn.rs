@@ -58,7 +58,9 @@ pub fn validate_packet(packet: &[u8]) -> Result<(Ipv4Addr, Ipv4Addr)> {
         "fragmented VPN packet"
     );
     let mut sum: u32 = packet[..20]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| u16::from_be_bytes([p[0], p[1]]) as u32)
         .sum();
     while sum > 0xffff {
@@ -116,8 +118,7 @@ impl Node {
         conn: Connection,
         tag: String,
         routes: Vec<Ipv4Net>,
-        local: Ipv4Addr,
-        remote: Ipv4Addr,
+        addresses: (Ipv4Addr, Ipv4Addr),
         server: bool,
         cancel: CancellationToken,
     ) -> Result<mpsc::Receiver<Vec<u8>>> {
@@ -145,8 +146,8 @@ impl Node {
                 tag: bytes,
                 rx: tx,
                 routes,
-                local,
-                remote,
+                local: addresses.0,
+                remote: addresses.1,
                 server,
                 cancel,
                 sent: AtomicU64::new(0),
@@ -175,16 +176,14 @@ impl Node {
         }
         let id = URL_SAFE_NO_PAD.encode(&data[..TAG]);
         let sessions = self.vpn.lock().unwrap();
-        if let Some(s) = sessions.get(&id) {
-            if s.conn.remote_id() == conn.remote_id()
-                && !s.cancel.is_cancelled()
-                && s.allowed(&data[TAG..], false).is_ok()
-            {
-                if s.rx.try_send(data[TAG..].to_vec()).is_ok() {
-                    s.received
-                        .fetch_add((data.len() - TAG) as u64, Ordering::Relaxed);
-                }
-            }
+        if let Some(s) = sessions.get(&id)
+            && s.conn.remote_id() == conn.remote_id()
+            && !s.cancel.is_cancelled()
+            && s.allowed(&data[TAG..], false).is_ok()
+            && s.rx.try_send(data[TAG..].to_vec()).is_ok()
+        {
+            s.received
+                .fetch_add((data.len() - TAG) as u64, Ordering::Relaxed);
         }
     }
     pub fn vpn_stats(&self, id: &str) -> serde_json::Value {
@@ -219,8 +218,7 @@ impl Node {
             conn.clone(),
             session.clone(),
             routes.clone(),
-            local,
-            remote,
+            (local, remote),
             false,
             cancel.clone(),
         ) {
@@ -254,13 +252,13 @@ impl Node {
         // Conservative: reject any route overlapping this device's direct addresses.
         // This keeps LAN Iroh paths outside the packet tunnel as well as public relays.
         for a in &self.endpoint.addr().addrs {
-            if let iroh::TransportAddr::Ip(addr) = a {
-                if let std::net::IpAddr::V4(ip) = addr.ip() {
-                    ensure!(
-                        !routes.iter().any(|r| r.contains(&ip)),
-                        "VPN route overlaps a local transport network"
-                    );
-                }
+            if let iroh::TransportAddr::Ip(addr) = a
+                && let std::net::IpAddr::V4(ip) = addr.ip()
+            {
+                ensure!(
+                    !routes.iter().any(|r| r.contains(&ip)),
+                    "VPN route overlaps a local transport network"
+                );
             }
         }
         Ok(())
@@ -291,8 +289,7 @@ impl Node {
                 conn.clone(),
                 session.clone(),
                 routes,
-                p.local_ip,
-                p.peer_ip,
+                (p.local_ip, p.peer_ip),
                 true,
                 cancel.clone(),
             )?;
@@ -401,7 +398,9 @@ mod tests {
         p[12..16].copy_from_slice(&src);
         p[16..20].copy_from_slice(&dst);
         let mut sum: u32 = p[..20]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|x| u16::from_be_bytes([x[0], x[1]]) as u32)
             .sum();
         while sum > 0xffff {
@@ -469,8 +468,7 @@ mod tests {
                 s,
                 id.clone(),
                 routes.clone(),
-                "10.1.0.1".parse().unwrap(),
-                "10.1.0.2".parse().unwrap(),
+                ("10.1.0.1".parse().unwrap(), "10.1.0.2".parse().unwrap()),
                 true,
                 server.cancel.child_token(),
             )
@@ -480,8 +478,7 @@ mod tests {
                 c.clone(),
                 id.clone(),
                 routes,
-                "10.1.0.2".parse().unwrap(),
-                "10.1.0.1".parse().unwrap(),
+                ("10.1.0.2".parse().unwrap(), "10.1.0.1".parse().unwrap()),
                 false,
                 client.cancel.child_token(),
             )
