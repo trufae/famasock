@@ -8,7 +8,7 @@ def ident(name): return hashlib.sha1(name.encode()).hexdigest()[:24].upper()
 def quote(s): return '"' + s.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n') + '"'
 def obj(name, body):
     i = ident(name); objects[i] = body; return i
-def arr(items): return '(' + ', '.join(items) + ',)'
+def arr(items): return '(' + ', '.join(items) + (',)' if items else ')')
 def config(name, settings):
     return obj(name, 'isa = XCBuildConfiguration; name = '+quote(name.split('/')[-1])+'; buildSettings = {' + ''.join(k+' = '+quote(v)+';' for k,v in settings.items()) + '};')
 def configs(name, settings):
