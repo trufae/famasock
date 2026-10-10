@@ -1,10 +1,7 @@
 //! IPv4 split-tunnel packets over unreliable QUIC datagrams; no custom IP stack.
-use crate::{
-    Node,
-    node::{Reply, Request},
-    store::Policy,
-    wire,
-};
+use crate::{Node, node::Request, store::Policy};
+#[cfg(target_os = "linux")]
+use crate::{node::Reply, wire};
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
@@ -270,20 +267,28 @@ impl Node {
         routes: Vec<Ipv4Net>,
         session: String,
         mut send: SendStream,
-        mut recv: RecvStream,
+        recv: RecvStream,
     ) -> Result<()> {
-        route_valid(&routes)?;
-        let p = policy.vpn.context("VPN not authorized")?;
-        ensure!(
-            routes.iter().all(|r| p
-                .routes
-                .iter()
-                .any(|a| a.prefix_len() <= r.prefix_len() && a.contains(&r.network()))),
-            "VPN route not authorized"
-        );
+        let p = Self::checked(
+            &mut send,
+            (|| {
+                route_valid(&routes)?;
+                let p = policy.vpn.context("VPN not authorized")?;
+                ensure!(
+                    routes.iter().all(|r| p
+                        .routes
+                        .iter()
+                        .any(|a| a.prefix_len() <= r.prefix_len() && a.contains(&r.network()))),
+                    "VPN route not authorized"
+                );
+                Ok(p)
+            })(),
+        )
+        .await?;
         #[cfg(target_os = "linux")]
         {
-            let device = open_tun(&p.tun)?;
+            let mut recv = recv;
+            let device = Self::checked(&mut send, open_tun(&p.tun)).await?;
             let cancel = self.cancel.child_token();
             let packets = self.install_packets(
                 conn.clone(),
@@ -314,8 +319,8 @@ impl Node {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (conn, session, send, recv);
-            anyhow::bail!("VPN exit requires Linux")
+            let _ = (conn, session, recv, p);
+            Self::checked(&mut send, Err(anyhow::anyhow!("VPN exit requires Linux"))).await
         }
     }
     #[cfg(target_os = "linux")]
