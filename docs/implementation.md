@@ -48,6 +48,18 @@ their mobile bindings. This supersedes the temporary netdev source patch; no
 vendored networking implementation is needed. Physical-device behavior still
 requires validation.
 
+## Android client (PR #2)
+
+- [x] Native Android 8.0+ app with QR/paste pairing, peer approval and policy editing.
+- [x] Shared Rust JNI bridge, Android system DNS/TLS and network-change callbacks.
+- [x] Keystore-encrypted identity, foreground socket tunnels and split-route VpnService.
+- [x] arm64/x86_64 build recipe and emulator tests for real pairing/TCP, identity,
+      concurrent shutdown, notification Stop and activity recreation.
+- [ ] Physical Android camera, VPN traffic to Linux TUN and Wi-Fi/cellular testing.
+
+See [Android build and validation instructions](android.md) and PR #2 checks for
+APK/lint/emulator results; source implementation alone is not device verification.
+
 ## Remaining engineering work (not represented as working)
 
 - [ ] Privileged Linux route/NAT/DNS setup helper with automatic cleanup;
@@ -58,7 +70,8 @@ requires validation.
 - [ ] VPN automatic reconnect/backoff and physical-device network-change tests.
 - [ ] Persist/re-enable saved tunnel profiles and richer connection history.
 - [ ] Optional Chatmail account/contact/messaging/control integration.
-- [ ] App icon, accessibility/localization pass, signed distribution packaging.
+- [x] Shared original app icon for iOS/Android and README.
+- [ ] Accessibility/localization pass and signed distribution packaging.
 
 ## Next-session entry point
 

@@ -23,6 +23,7 @@ public class CoreTest {
         return new RustCore(context, directory.getPath(), key);
     }
     @Test public void identityPersistsEncryptedAndCoreReopens() throws Exception {
+        assertNotNull(Class.forName("org.rustls.platformverifier.CertificateVerifier"));
         byte[] first = Identity.load(context), second = Identity.load(context);
         assertEquals(32, first.length); assertArrayEquals(first, second);
         byte[] stored = Files.readAllBytes(new File(context.getNoBackupFilesDir(), "identity.enc").toPath());
