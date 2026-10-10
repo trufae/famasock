@@ -27,6 +27,9 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked
       - run: python3 scripts/cli-smoke.py
+      - name: Public relay without direct UDP
+        if: runner.os == 'Linux'
+        run: cargo test -p famasock --test relay --locked -- --ignored
       - name: Real Linux TUN forwarding
         if: runner.os == 'Linux'
         run: sudo python3 scripts/vpn-kernel.py

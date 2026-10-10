@@ -110,6 +110,12 @@ struct ReverseTarget {
     target: SocketAddr,
     cancel: CancellationToken,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TransportMode {
+    Automatic,
+    LocalOnly,
+    RelayOnly,
+}
 pub struct Node {
     pub endpoint: Endpoint,
     pub(crate) store: Mutex<Store>,
@@ -132,7 +138,7 @@ impl Node {
         path: &Path,
         name: &str,
         key: Option<[u8; 32]>,
-        offline: bool,
+        mode: TransportMode,
     ) -> Result<Arc<Self>> {
         pairing::validate_name(name)?;
         let store = Store::open(path, name, key)?;
@@ -155,12 +161,15 @@ impl Node {
             .secret_key(store.key.clone())
             .alpns(vec![wire::ALPN.to_vec()])
             .transport_config(cfg);
-        if offline {
+        if mode == TransportMode::LocalOnly {
             builder = builder
                 .relay_mode(iroh::RelayMode::Disabled)
                 .clear_address_lookup()
                 .clear_ip_transports()
                 .bind_addr("127.0.0.1:0")?;
+        }
+        if mode == TransportMode::RelayOnly {
+            builder = builder.clear_ip_transports();
         }
         let endpoint = builder.bind().await?;
         // Address enumeration happens asynchronously after bind.

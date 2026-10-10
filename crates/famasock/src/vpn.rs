@@ -458,8 +458,12 @@ mod tests {
     async fn real_quic_datagrams_are_session_bound_and_filtered() {
         let a = tempfile::tempdir().unwrap();
         let b = tempfile::tempdir().unwrap();
-        let client = Node::open(a.path(), "client", None, true).await.unwrap();
-        let server = Node::open(b.path(), "server", None, true).await.unwrap();
+        let client = Node::open(a.path(), "client", None, crate::TransportMode::LocalOnly)
+            .await
+            .unwrap();
+        let server = Node::open(b.path(), "server", None, crate::TransportMode::LocalOnly)
+            .await
+            .unwrap();
         for (node, other) in [(&client, &server), (&server, &client)] {
             node.store
                 .lock()
