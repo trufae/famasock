@@ -1,7 +1,7 @@
 use anyhow::{Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub const ALPN: &[u8] = b"famasock/1";
 pub const MAX_HEADER: usize = 8192;
 pub const SETUP_TIMEOUT: Duration = Duration::from_secs(15);
