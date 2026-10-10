@@ -17,6 +17,7 @@ pub enum Command {
         uri: String,
         device: String,
     },
+    CancelPair,
     Pending,
     Approve {
         id: String,
@@ -86,6 +87,10 @@ impl Node {
                 Value::Null
             }
             Command::Pair { uri, device } => json!({"id":self.pair(&uri,&device).await?}),
+            Command::CancelPair => {
+                self.cancel_pair();
+                Value::Null
+            }
             Command::Pending => self.pending(),
             Command::Approve { id, accept } => {
                 self.approve(&id, accept)?;

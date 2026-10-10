@@ -55,7 +55,10 @@ struct AddPeerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                if model.pairing { ProgressView("Waiting for approval on the computer…") }
+                if model.pairing {
+                    ProgressView("Waiting for approval on the computer…")
+                    Button("Cancel pairing", role: .cancel) { Task { await model.run(["op": "cancel_pair"]) } }
+                }
                 else if scan {
                     ScannerView { result in
                         switch result {

@@ -144,3 +144,94 @@ async fn multiple_peers_and_shutdown_do_not_cross_authorize() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn cancelled_pairing_and_invitation_revocation_release_pending_requests() {
+    let (_a, _b, home, phone) = nodes().await;
+    let invite = home.invitation().unwrap();
+    let uri = invite.uri().unwrap();
+    let mut events = home.subscribe();
+    let p = phone.clone();
+    let task = tokio::spawn(async move { p.pair(&uri, "test").await });
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if events.recv().await.unwrap()["event"] == "pair_request" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    home.cancel_invitation(&invite.id);
+    assert!(
+        timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert!(home.pending().as_array().unwrap().is_empty());
+    assert!(home.snapshot()["peers"].as_array().unwrap().is_empty());
+    phone.shutdown().await;
+    home.shutdown().await;
+}
+#[tokio::test]
+async fn modified_invitation_secret_does_not_consume_valid_invitation() {
+    let (_a, _b, home, phone) = nodes().await;
+    let invite = home.invitation().unwrap();
+    let mut forged = invite.clone();
+    forged.secret = famasock::pairing::random().unwrap();
+    assert!(phone.pair(&forged.uri().unwrap(), "test").await.is_err());
+    let mut events = home.subscribe();
+    let p = phone.clone();
+    let uri = invite.uri().unwrap();
+    let task = tokio::spawn(async move { p.pair(&uri, "test").await });
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if events.recv().await.unwrap()["event"] == "pair_request" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    home.approve(&invite.id, true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+    phone.shutdown().await;
+    home.shutdown().await;
+}
+
+#[tokio::test]
+async fn initiator_cancellation_closes_connection_and_clears_approval() {
+    let (_a, _b, home, phone) = nodes().await;
+    let uri = home.invitation().unwrap().uri().unwrap();
+    let mut events = home.subscribe();
+    let p = phone.clone();
+    let task = tokio::spawn(async move { p.pair(&uri, "test").await });
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if events.recv().await.unwrap()["event"] == "pair_request" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    phone.cancel_pair();
+    assert!(
+        timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    timeout(Duration::from_secs(5), async {
+        while !home.pending().as_array().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    phone.shutdown().await;
+    home.shutdown().await;
+}

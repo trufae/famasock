@@ -35,6 +35,7 @@ enum Cmd {
     },
     Peers,
     Status,
+    CancelPair,
     Pending,
     Approve {
         id: String,
@@ -258,6 +259,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Cmd::Status | Cmd::Peers => Command::Status,
+        Cmd::CancelPair => Command::CancelPair,
         Cmd::Pending => Command::Pending,
         Cmd::Approve { id, reject } => Command::Approve {
             id,
