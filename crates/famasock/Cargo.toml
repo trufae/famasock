@@ -1,0 +1,31 @@
+[package]
+name = "famasock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+iroh = { version = "=1.3.0", default-features = false, features = ["tls-ring"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+base64 = "0.22"
+getrandom = "0.4"
+subtle = "2"
+fs2 = "0.4"
+ipnet = { version = "2", features = ["serde"] }
+fast-socks5 = "1"
+bytes = "1"
+futures-util = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tun = { version = "0.8", features = ["async"] }
+
+[dev-dependencies]
+tempfile = "3"

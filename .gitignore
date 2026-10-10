@@ -1,0 +1,6 @@
+/target/
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+apps/ios/Frameworks/
