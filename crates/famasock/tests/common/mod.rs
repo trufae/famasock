@@ -40,7 +40,10 @@ pub async fn pair(home: &Arc<Node>, phone: &Arc<Node>) -> String {
     task.await.unwrap().unwrap()
 }
 pub async fn echo() -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    echo_on("127.0.0.1:0").await
+}
+pub async fn echo_on(bind: &str) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let server = TcpListener::bind(bind).await.unwrap();
     let addr = server.local_addr().unwrap();
     let task = tokio::spawn(async move {
         while let Ok((mut socket, _)) = server.accept().await {
