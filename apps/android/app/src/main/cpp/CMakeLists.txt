@@ -17,8 +17,8 @@ set(RUST_LIB "${RUST_DIR}/${RUST_TARGET}/release/libfamasock.a")
 file(GLOB_RECURSE RUST_SOURCES CONFIGURE_DEPENDS "${ROOT}/crates/famasock/src/*.rs")
 string(TOUPPER "${RUST_TARGET}" TARGET_ENV)
 string(REPLACE "-" "_" TARGET_ENV "${TARGET_ENV}")
-# Avoid empty archive members observed with Android x86_64 ThinLTO on Rust 1.99.
-# Keep this override local to the JNI static library; desktop/iOS profiles stay intact.
+# The NDK performs the final JNI link. Keep root-crate LTO disabled for this
+# static archive; desktop/iOS profiles stay intact.
 add_custom_command(OUTPUT "${RUST_LIB}"
     COMMAND ${CMAKE_COMMAND} -E env
         "CARGO_TARGET_DIR=${RUST_DIR}"

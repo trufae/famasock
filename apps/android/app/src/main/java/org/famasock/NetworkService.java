@@ -172,7 +172,11 @@ public final class NetworkService extends VpnService {
         try { lifecycle.execute(() -> { if (session.equals(vpnId)) { report(e); stopVpnNow(); } }); }
         catch (RejectedExecutionException ignored) { /* shutdown already owns cleanup */ }
     }
-    void stopVpn() { if (!stopping) lifecycle.execute(this::stopVpnNow); }
+    void stopVpn() {
+        if (stopping) return;
+        try { lifecycle.execute(this::stopVpnNow); }
+        catch (RejectedExecutionException ignored) { /* revocation raced with service shutdown */ }
+    }
     private void stopVpnNow() {
         pumping = false;
         if (vpnId != null) {
