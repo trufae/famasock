@@ -2,9 +2,16 @@ import SwiftUI
 @main
 struct FamasockApp: App {
     @StateObject private var model = Model()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             PeersView().environmentObject(model).task { await model.start() }
+                .onChange(of: scenePhase) { _, phase in
+                    Task {
+                        if phase == .background { await model.suspend() }
+                        else if phase == .active { await model.start() }
+                    }
+                }
                 .alert("Famasock", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
                     Button("OK") { model.error = nil }
                 } message: { Text(model.error ?? "") }

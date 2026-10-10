@@ -39,7 +39,7 @@ in source control. Provisioning and distribution eligibility must be checked in
 your Apple developer account.
 
 The app and extension cannot open the same state directory simultaneously. The
-app shuts down Rust before starting VPN; the extension shuts down and joins its
+app shuts down Rust when entering the background and before starting VPN; the extension shuts down and joins its
 packet/event readers before releasing the shared state. If starting the app
 while VPN is connected, peer/status information comes from provider messages.
 Neither process generates a replacement identity just because the Keychain is
@@ -55,6 +55,7 @@ locked or inaccessible: that is an error requiring user attention.
 6. Configure the Linux TUN and policy from vpn.md, start VPN, test allowed subnet.
 7. Lock the phone; test traffic, Wi-Fi/cellular changes, sleep and reconnection.
 8. Stop VPN, verify route/DNS removal and that foreground networking can reopen.
+   Background the app and reconnect from system Settings; verify state ownership.
 9. Revoke the phone at the server during live TCP and VPN transfers.
 10. Measure extension memory and battery use; validate relay fallback on real NATs.
 
