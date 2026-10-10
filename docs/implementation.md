@@ -21,6 +21,8 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 ## Implemented, with platform verification in progress
 
 - [x] CLI, daemon control socket, terminal QR and user systemd example.
+- [x] Socket-only forwarding/SOCKS require no TUN or root; CLI smoke test
+      explicitly refuses root execution. Privileged kernel tests are separate.
 - [x] Native SwiftUI peers, scanner, permission editor and tunnel screens.
 - [x] Shared Keychain identity and app/extension endpoint ownership handoff.
 - [x] NEPacketTunnelProvider and Xcode project/build configuration.

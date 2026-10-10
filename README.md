@@ -10,6 +10,19 @@ remaining work. In particular, full-tunnel VPN, IPv6 VPN, SOCKS UDP and Chatmail
 integration are not implemented. Do not infer physical-iPhone testing from an
 unsigned CI build.
 
+## No root needed for forwarding or SOCKS
+
+TCP forwarding, reverse forwarding and SOCKS5 use ordinary TCP sockets carried
+by independent encrypted Iroh QUIC streams. Run `serve`, `pair`, `forward`,
+`reverse` and `socks` as your normal user. They do not create or open a TUN device,
+change routes/DNS/firewall rules, or require VPN configuration. Choose unprivileged
+listening ports (for example 2222, 8080 and 1080); operating-system restrictions
+on privileged ports still apply.
+
+The IP-layer VPN is separate and optional. Only `vpn` needs a provisioned Linux
+TUN or the iOS Packet Tunnel extension. On iOS, ordinary socket tunnels run in
+the foreground; persistent VPN networking belongs to the extension.
+
 ## Build and run
 
 Install stable Rust (minimum 1.91; development/CI currently uses 1.99):

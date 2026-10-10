@@ -2,6 +2,8 @@
 """Real daemon/control-socket/CLI smoke test; no external network dependency."""
 import json, os, socket, struct, subprocess, sys, tempfile, time
 from pathlib import Path
+assert os.geteuid() != 0, 'Run the socket-only CLI smoke test as a normal user, without sudo'
+print(f'Socket-only daemon/CLI test, uid={os.geteuid()}, no TUN setup')
 binary = str(Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/famasock').resolve())
 def rpc(root, command):
     payload=json.dumps(command).encode()
