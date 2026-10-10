@@ -58,7 +58,9 @@ final class RustCore: @unchecked Sendable {
             }
         }
         guard let pointer else {
-            let message = error.map { String(cString: $0) } ?? "Cannot start networking"
+            let raw = error.map { String(cString: $0) } ?? "Cannot start networking"
+            let detail = raw.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let message = detail?["error"] as? String ?? raw
             famasock_string_free(error)
             throw FamasockError(message: message)
         }

@@ -95,7 +95,15 @@ pub unsafe extern "C" fn famasock_command(
             if input["op"] == "vpn_start" {
                 let peer = input["peer"].as_str().context("missing peer")?;
                 let routes = serde_json::from_value(input["routes"].clone())?;
-                let VpnLink { id,local_ip,remote_ip,routes,packets } = h.node.start_vpn(peer,routes).await?;
+                {
+                    let mut readers = h.packets.lock().unwrap();
+                    readers.retain(|_, reader| reader.try_lock().map_or(true, |rx| !rx.is_closed()));
+                    ensure!(readers.len() < 8, "packet reader limit reached");
+                }
+                let VpnLink { id,local_ip,remote_ip,routes,packets } = tokio::select! {
+                    result = h.node.start_vpn(peer,routes) => result?,
+                    _ = h.node.cancel.cancelled() => anyhow::bail!("core stopped"),
+                };
                 h.packets.lock().unwrap().insert(id.clone(),Arc::new(AsyncMutex::new(packets)));
                 return Ok(json!({"id":id,"local_ip":local_ip,"remote_ip":remote_ip,"routes":routes,"mtu":crate::vpn::MTU}));
             }
@@ -173,7 +181,10 @@ pub unsafe extern "C" fn famasock_receive_packet(
                 }
                 Ok(p.len() as i32)
             }
-            None => Ok(0),
+            None => {
+                h.packets.lock().unwrap().remove(id);
+                Ok(0)
+            }
         }
     })();
     result.unwrap_or(-1)
