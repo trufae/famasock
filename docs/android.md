@@ -20,9 +20,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Gradle invokes CMake, which builds the locked Rust library for each ABI and links
-the JNI shared library. Root-crate LTO is disabled for the Android static archive
-to avoid empty archive members observed with Rust 1.99 on x86_64; optimization
-remains enabled. Rust must be on Android Studio's inherited PATH. The
+the JNI shared library. The Android static archive uses release optimization
+with root-crate LTO disabled; the NDK performs the final shared-library link. Rust must be on Android Studio's inherited PATH. The
 wrapper pins Gradle 8.11.1 with its distribution SHA-256. Dependencies come from
 Google Maven, Maven Central and the upstream rustls verifier Maven archive.
 The verifier JVM component version is read from Cargo.lock. JNI installs a
@@ -44,8 +43,9 @@ an installable debug APK and test/lint reports.
    everything. Trust and names persist; active tunnels do not survive a restart.
 
 Android can also display an invitation QR and approve/reject incoming requests.
-Invitations expire after five minutes and closing the QR dialog cancels an unused
-invitation. Trust grants TCP access by default, just like the CLI. **Edit inbound
+Invitations expire after five minutes. After scanning, choose **Review requests**
+to approve the requesting identity; **Cancel invitation** revokes the QR and any
+associated pending request. Trust grants TCP access by default, just like the CLI. **Edit inbound
 policy** accepts the shared policy JSON and validates it in Rust; its rules govern
 access to this Android device. Saving closes existing peer sessions. **Revoke
 trust** removes the peer and terminates sessions.

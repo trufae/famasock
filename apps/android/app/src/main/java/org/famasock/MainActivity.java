@@ -100,8 +100,9 @@ public final class MainActivity extends Activity {
     private void request(JSONObject command, Reply reply) {
         if (service == null) { error("Start networking first"); return; }
         error("");
-        service.request(command, (data, message) -> {
-            if (isDestroyed()) return;
+        NetworkService source = service;
+        source.request(command, (data, message) -> {
+            if (isDestroyed() || service != source || source.stopped()) return;
             if (message != null) { error(message); return; }
             try { reply.receive(data); } catch (Exception e) { error(e.getMessage()); }
         });
@@ -229,10 +230,13 @@ public final class MainActivity extends Activity {
         ImageView image = new ImageView(this); image.setContentDescription("Famasock pairing invitation QR");
         image.setImageBitmap(new BarcodeEncoder().encodeBitmap(uri, BarcodeFormat.QR_CODE, 768, 768));
         content.addView(image, new LinearLayout.LayoutParams(-1, dp(280)));
-        text(content, "Expires in five minutes. Approve the requesting identity below after scanning.");
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Pair another device").setView(content).setPositiveButton("Done", null).create();
+        text(content, "Expires in five minutes. After scanning, tap Review requests to approve the requesting identity.");
         NetworkService owner = service;
-        dialog.setOnDismissListener(d -> owner.request(json("op", "cancel_invite", "id", invitation.optString("id")), (data, message) -> { }));
+        Runnable cancel = () -> owner.request(json("op", "cancel_invite", "id", invitation.optString("id")), (data, message) -> { });
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Pair another device").setView(content)
+                .setPositiveButton("Review requests", (d,w) -> refresh())
+                .setNegativeButton("Cancel invitation", (d,w) -> cancel.run()).create();
+        dialog.setOnCancelListener(d -> cancel.run());
         dialog.show();
     }
     private void vpnDialog(String peer) {
