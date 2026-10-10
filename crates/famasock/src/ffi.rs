@@ -59,7 +59,12 @@ pub unsafe extern "C" fn famasock_open(
             .worker_threads(2)
             .enable_all()
             .build()?;
-        let node = runtime.block_on(Node::open(Path::new(path), name, Some(bytes), false))?;
+        let node = runtime.block_on(Node::open(
+            Path::new(path),
+            name,
+            Some(bytes),
+            crate::TransportMode::Automatic,
+        ))?;
         let events = AsyncMutex::new(node.subscribe());
         Ok(Handle {
             runtime,
@@ -227,7 +232,12 @@ mod tests {
             .build()
             .unwrap();
         let node = runtime
-            .block_on(Node::open(dir.path(), "ffi", Some([42; 32]), true))
+            .block_on(Node::open(
+                dir.path(),
+                "ffi",
+                Some([42; 32]),
+                crate::TransportMode::LocalOnly,
+            ))
             .unwrap();
         let events = AsyncMutex::new(node.subscribe());
         let handle = Box::into_raw(Box::new(Handle {

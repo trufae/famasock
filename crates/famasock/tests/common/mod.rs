@@ -10,8 +10,12 @@ use tokio::{
 pub async fn nodes() -> (tempfile::TempDir, tempfile::TempDir, Arc<Node>, Arc<Node>) {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
-    let home = Node::open(a.path(), "home", None, true).await.unwrap();
-    let phone = Node::open(b.path(), "phone", None, true).await.unwrap();
+    let home = Node::open(a.path(), "home", None, famasock::TransportMode::LocalOnly)
+        .await
+        .unwrap();
+    let phone = Node::open(b.path(), "phone", None, famasock::TransportMode::LocalOnly)
+        .await
+        .unwrap();
     (a, b, home, phone)
 }
 pub async fn pair(home: &Arc<Node>, phone: &Arc<Node>) -> String {

@@ -114,7 +114,14 @@ async fn multiple_peers_and_shutdown_do_not_cross_authorize() {
     let (_a, _b, home, phone) = nodes().await;
     pair(&home, &phone).await;
     let dir = tempfile::tempdir().unwrap();
-    let laptop = Node::open(dir.path(), "laptop", None, true).await.unwrap();
+    let laptop = Node::open(
+        dir.path(),
+        "laptop",
+        None,
+        famasock::TransportMode::LocalOnly,
+    )
+    .await
+    .unwrap();
     pair(&home, &laptop).await;
     assert_eq!(home.snapshot()["peers"].as_array().unwrap().len(), 2);
     assert!(
@@ -240,9 +247,14 @@ async fn initiator_cancellation_closes_connection_and_clears_approval() {
 async fn simultaneous_peers_keep_permissions_and_revocation_isolated() {
     let (_a, _b, home, phone) = nodes().await;
     let third = tempfile::tempdir().unwrap();
-    let laptop = Node::open(third.path(), "laptop", None, true)
-        .await
-        .unwrap();
+    let laptop = Node::open(
+        third.path(),
+        "laptop",
+        None,
+        famasock::TransportMode::LocalOnly,
+    )
+    .await
+    .unwrap();
     let home_id = pair(&home, &phone).await;
     pair(&home, &laptop).await;
     let (addr, echo) = echo().await;

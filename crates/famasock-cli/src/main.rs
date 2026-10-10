@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
-use famasock::{Node, control::Command, wire};
+use famasock::{Node, TransportMode, control::Command, wire};
 use serde_json::{Value, json};
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -26,6 +26,9 @@ enum Cmd {
         name: String,
         #[arg(long, hide = true)]
         offline: bool,
+        /// Disable direct UDP paths to diagnose encrypted relay connectivity.
+        #[arg(long, conflicts_with = "offline")]
+        relay_only: bool,
     },
     /// Display a single-use QR and ask for approval when a device scans it.
     Pair {
@@ -119,8 +122,8 @@ async fn rpc(path: &Path, command: &Command) -> Result<Value> {
     }
     Ok(result["data"].clone())
 }
-async fn serve(path: &Path, name: &str, offline: bool) -> Result<()> {
-    let node = Node::open(path, name, None, offline).await?;
+async fn serve(path: &Path, name: &str, mode: TransportMode) -> Result<()> {
+    let node = Node::open(path, name, None, mode).await?;
     let sockpath = path.join("control.sock");
     if sockpath.exists() {
         std::fs::remove_file(&sockpath)?;
@@ -252,7 +255,20 @@ async fn pair(path: &Path, accept: Option<String>) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let command = match cli.command {
-        Cmd::Serve { name, offline } => return serve(&cli.state, &name, offline).await,
+        Cmd::Serve {
+            name,
+            offline,
+            relay_only,
+        } => {
+            let mode = if offline {
+                TransportMode::LocalOnly
+            } else if relay_only {
+                TransportMode::RelayOnly
+            } else {
+                TransportMode::Automatic
+            };
+            return serve(&cli.state, &name, mode).await;
+        }
         Cmd::Pair { accept } => return pair(&cli.state, accept).await,
         Cmd::Version => {
             println!("famasock {}", env!("CARGO_PKG_VERSION"));
