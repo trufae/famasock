@@ -60,7 +60,8 @@ notification opens the app and offers **Stop**, including while the UI is bound.
 A denied notification permission does not grant any extra background exemption;
 Android still lists the foreground service in its active-app controls. Service
 restart is non-sticky: after process death, reopen the app and recreate tunnels.
-Battery restrictions, force stop, and network transitions may interrupt sessions.
+Android network callbacks notify Iroh when the default network changes. Battery
+restrictions, force stop, and network transitions may still interrupt sessions.
 
 The 32-byte Iroh identity is encrypted with an AES-GCM key held in Android
 Keystore. Only authenticated ciphertext and its nonce enter the app's no-backup

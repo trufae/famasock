@@ -9,6 +9,7 @@ use std::{net::SocketAddr, sync::Arc};
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Status,
+    NetworkChange,
     Invite,
     CancelInvite {
         id: String,
@@ -78,6 +79,10 @@ impl Node {
     pub async fn command(self: &Arc<Self>, command: Command) -> Result<Value> {
         Ok(match command {
             Command::Status => self.snapshot(),
+            Command::NetworkChange => {
+                self.endpoint.network_change().await;
+                Value::Null
+            }
             Command::Invite => {
                 let i = self.invitation()?;
                 json!({"uri":i.uri()?,"id":i.id,"expires":i.expires})

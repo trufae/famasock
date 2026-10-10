@@ -3,7 +3,11 @@ package org.famasock;
 import android.app.*;
 import android.content.Intent;
 import android.net.VpnService;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.LinkProperties;
 import android.os.*;
+import android.system.OsConstants;
 import org.json.*;
 import java.io.*;
 import java.util.Arrays;
@@ -26,6 +30,15 @@ public final class NetworkService extends VpnService {
     private FileOutputStream tunOutput;
     private Thread outgoing, incoming;
     private Runnable observer;
+    private final Runnable notifyNetwork = () -> {
+        if (ready()) request(json("op", "network_change"), (data, failure) -> { });
+    };
+    private final ConnectivityManager.NetworkCallback networkChanges = new ConnectivityManager.NetworkCallback() {
+        private void changedNetwork() { main.removeCallbacks(notifyNetwork); main.postDelayed(notifyNetwork, 250); }
+        @Override public void onAvailable(Network network) { changedNetwork(); }
+        @Override public void onLost(Network network) { changedNetwork(); }
+        @Override public void onLinkPropertiesChanged(Network network, LinkProperties properties) { changedNetwork(); }
+    };
 
     public final class LocalBinder extends Binder { NetworkService service() { return NetworkService.this; } }
     interface Result { void done(Object data, String error); }
@@ -47,6 +60,7 @@ public final class NetworkService extends VpnService {
         startForeground(1, new Notification.Builder(this, "network").setSmallIcon(R.drawable.ic_network)
                 .setContentTitle("Famasock networking active").setContentText("Paired peers and tunnels remain available")
                 .setContentIntent(open).setOngoing(true).addAction(new Notification.Action.Builder(null, "Stop", stop).build()).build());
+        getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkChanges, main);
         lifecycle.execute(() -> {
             try {
                 byte[] key = Identity.load(this);
@@ -101,6 +115,7 @@ public final class NetworkService extends VpnService {
                 try {
                     Builder builder = new Builder().setSession("Famasock").setMtu(info.getInt("mtu"))
                             .addAddress(info.getString("local_ip"), 32)
+                            .allowFamily(OsConstants.AF_INET6) // IPv6 remains on the underlying network.
                             // Keep every core socket outside VPN, including private peer endpoints.
                             .addDisallowedApplication(getPackageName());
                     JSONArray allowed = info.getJSONArray("routes");
@@ -172,6 +187,8 @@ public final class NetworkService extends VpnService {
     private void shutdown() {
         if (stopping) return;
         stopping = true;
+        getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkChanges);
+        main.removeCallbacks(notifyNetwork);
         observer = null;
         commands.shutdownNow();
         // Wake a pairing/VPN negotiation already blocking the lifecycle executor.

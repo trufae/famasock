@@ -33,6 +33,7 @@ public class CoreTest {
         try (RustCore core = new RustCore(context, path.getPath(), first)) {
             id = ((JSONObject)core.command(json("op", "status"))).getString("id");
             assertFalse(RustCore.version().isEmpty());
+            assertEquals(JSONObject.NULL, core.command(json("op", "network_change")));
         }
         try (RustCore core = new RustCore(context, path.getPath(), second)) {
             assertEquals(id, ((JSONObject)core.command(json("op", "status"))).getString("id"));
