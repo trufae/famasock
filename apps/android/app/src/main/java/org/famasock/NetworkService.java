@@ -64,7 +64,17 @@ public final class NetworkService extends VpnService {
         lifecycle.execute(() -> {
             try {
                 byte[] key = Identity.load(this);
-                try { core = new RustCore(this, new File(getNoBackupFilesDir(), "state").getPath(), key); }
+                try {
+                    for (int attempt = 0; attempt < 6; attempt++) {
+                        if (stopping) return;
+                        try { core = new RustCore(this, new File(getNoBackupFilesDir(), "state").getPath(), key); break; }
+                        catch (IllegalStateException e) {
+                            // A previous service may still be releasing its endpoint after Stop.
+                            if (attempt == 5 || !String.valueOf(e.getMessage()).contains("state is already in use")) throw e;
+                            Thread.sleep(100L << attempt);
+                        }
+                    }
+                }
                 finally { Arrays.fill(key, (byte)0); }
                 new Thread(() -> {
                     try {
