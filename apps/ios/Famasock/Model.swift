@@ -36,6 +36,18 @@ final class Model: ObservableObject {
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var opening = false
+    private var handoff = false
+    var vpnStatusText: String {
+        switch vpnStatus {
+        case .invalid: return "Not configured"
+        case .disconnected: return "Disconnected"
+        case .connecting: return "Connecting…"
+        case .connected: return "Connected"
+        case .reasserting: return "Reconnecting…"
+        case .disconnecting: return "Disconnecting…"
+        @unknown default: return "Unknown status"
+        }
+    }
     var vpnRunning: Bool { [.connected, .connecting, .reasserting, .disconnecting].contains(vpnStatus) }
 
     func start() async {
@@ -58,7 +70,7 @@ final class Model: ObservableObject {
         }
     }
     func openCore() async {
-        guard core == nil && !opening && !vpnRunning else { return }
+        guard core == nil && !opening && !handoff && !vpnRunning else { return }
         opening = true; defer { opening = false }
         do {
             let core = try await Task.detached {
@@ -111,7 +123,9 @@ final class Model: ObservableObject {
         } catch { if error.localizedDescription != "pairing cancelled" { self.error = error.localizedDescription } }
     }
     func startVPN(peer: String, routes: [String], dns: String) async {
-        guard !vpnRunning else { return }
+        guard !vpnRunning && !handoff && !opening else { return }
+        handoff = true
+        defer { handoff = false }
         do {
             let manager = manager ?? NETunnelProviderManager()
             let config = NETunnelProviderProtocol()
@@ -132,6 +146,7 @@ final class Model: ObservableObject {
             vpnStatus = manager.connection.status
         } catch {
             self.error = error.localizedDescription
+            handoff = false
             await openCore()
         }
     }
@@ -140,11 +155,16 @@ final class Model: ObservableObject {
         guard let session = manager?.connection as? NETunnelProviderSession else { return }
         do {
             try session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
-                guard let data, let text = String(data: data, encoding: .utf8) else { return }
+                guard let data else { return }
                 Task { @MainActor [weak self] in
-                    self?.vpnStats = text
                     if let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         self?.peers = (value["peers"] as? [[String: Any]] ?? []).compactMap(Peer.init)
+                        let traffic = value["traffic"] as? [String: Any] ?? [:]
+                        let sent = (traffic["sent"] as? NSNumber)?.int64Value ?? 0
+                        let received = (traffic["received"] as? NSNumber)?.int64Value ?? 0
+                        let upload = ByteCountFormatter.string(fromByteCount: sent, countStyle: .binary)
+                        let download = ByteCountFormatter.string(fromByteCount: received, countStyle: .binary)
+                        self?.vpnStats = "Sent \(upload) · Received \(download)"
                     }
                 }
             }

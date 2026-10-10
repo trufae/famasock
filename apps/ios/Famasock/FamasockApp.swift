@@ -19,7 +19,7 @@ struct PeersView: View {
             List {
                 if model.vpnRunning {
                     Section("VPN") {
-                        Label("\(String(describing: model.vpnStatus))", systemImage: "network.badge.shield.half.filled")
+                        Label(model.vpnStatusText, systemImage: "network.badge.shield.half.filled")
                         Button("Disconnect VPN") { model.stopVPN() }
                         Button("Transfer status") { model.refreshVPNStats() }
                         if !model.vpnStats.isEmpty { Text(model.vpnStats).font(.caption.monospaced()) }
@@ -214,6 +214,7 @@ struct VPNView: View {
     @State private var dns = ""
     var body: some View {
         Form {
+            LabeledContent("Status", value: model.vpnStatusText)
             Section("IPv4 split tunnel") {
                 TextField("Routes, comma separated", text: $route).textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("Optional DNS server within allowed routes", text: $dns).keyboardType(.decimalPad)
