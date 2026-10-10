@@ -17,3 +17,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 [profile.release]
 lto = "thin"
 strip = "debuginfo"
+
+# netdev 0.46.3's Darwin IPv6 flags code uses a libc type unavailable on iOS.
+# Remove this source patch once upstream supports the iOS request layout.
+[patch.crates-io]
+netdev = { path = "vendor/netdev" }
