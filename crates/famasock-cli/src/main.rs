@@ -311,11 +311,23 @@ async fn main() -> Result<()> {
         Cmd::Reverse { peer, rule } => {
             let (port, target) = rule
                 .split_once(':')
-                .context("expected port:127.0.0.1:port")?;
+                .context("expected port:localhost:port")?;
+            let target = match target.parse::<SocketAddr>() {
+                Ok(address) => address,
+                Err(_) => {
+                    let addresses =
+                        tokio::time::timeout(wire::SETUP_TIMEOUT, tokio::net::lookup_host(target))
+                            .await??;
+                    addresses
+                        .filter(|a| a.ip().is_loopback())
+                        .min_by_key(|a| !a.is_ipv4())
+                        .context("reverse target must resolve to loopback")?
+                }
+            };
             Command::Reverse {
                 peer,
                 port: port.parse()?,
-                target: target.parse()?,
+                target,
             }
         }
         Cmd::Socks { peer, listen } => Command::Socks { peer, listen },
