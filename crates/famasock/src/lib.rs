@@ -4,3 +4,4 @@ pub mod store;
 pub mod tcp;
 pub mod wire;
 pub use node::Node;
+pub mod socks;
