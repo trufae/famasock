@@ -12,6 +12,7 @@ concurrency:
 jobs:
   core:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
@@ -40,6 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ios
+          cache-on-failure: true
       - name: Verify generated project
         run: python3 scripts/generate-xcode.py && git diff --exit-code apps/ios/Famasock.xcodeproj
       - name: Build native app and extension for device (unsigned)
