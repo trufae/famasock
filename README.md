@@ -1,6 +1,6 @@
 # Famasock
 
-Pair your iPhone, Linux machine or Mac, then choose TCP destinations on your peers
+Pair your Android device, iPhone, Linux machine or Mac, then choose TCP destinations on your peers
 through encrypted Iroh connections. Direct QR pairing does not need an email
 account, public IP address or router port forwarding.
 
@@ -151,6 +151,18 @@ Ordinary forwarding/SOCKS are foreground-only on iOS. The Packet Tunnel extensio
 owns the Rust endpoint during VPN use. The app closes its endpoint first and
 reopens it after the extension releases the shared state lock. The long-term key
 is held in a shared Keychain access group, not in the shared filesystem.
+
+## Android
+
+Open `apps/android` in Android Studio, or use its Gradle wrapper. The native app
+supports Android 8.0+ on arm64 and x86_64, QR/paste pairing, multiple peers,
+TCP/reverse forwards, SOCKS5, inbound policy editing and private IPv4 split VPN.
+It uses the same Rust endpoint as the CLI and iOS app through a small JNI bridge.
+
+A foreground notification keeps networking active after leaving the screen;
+its **Stop** action closes all tunnels. Identity is encrypted with an Android
+Keystore key and excluded from backup. VPN uses Android's consent screen and
+`VpnService`; it does not need root. See [Android build and testing](docs/android.md).
 
 ## VPN
 
