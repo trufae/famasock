@@ -7,3 +7,5 @@ pub use node::Node;
 pub mod control;
 pub mod socks;
 pub mod vpn;
+
+pub mod ffi;
