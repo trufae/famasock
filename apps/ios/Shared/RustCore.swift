@@ -105,7 +105,11 @@ final class RustCore: @unchecked Sendable {
         do { try enter() } catch { return nil }
         defer { calls.leave() }
         var bytes = [UInt8](repeating: 0, count: 1100)
-        let count = session.withCString { famasock_receive_packet(handle, $0, &bytes, bytes.count) }
+        let count = session.withCString { id in
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                famasock_receive_packet(handle, id, buffer.baseAddress, buffer.count)
+            }
+        }
         return count > 0 ? Data(bytes.prefix(Int(count))) : nil
     }
     /// Must run off the main thread. No new calls can enter after this point.
