@@ -54,6 +54,10 @@ pub(crate) enum Request {
     ReverseConnect {
         id: String,
     },
+    Vpn {
+        routes: Vec<ipnet::Ipv4Net>,
+        session: String,
+    },
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Reply {
@@ -97,6 +101,7 @@ pub struct Node {
     dialing: tokio::sync::Mutex<()>,
     pub(crate) tunnels: Mutex<HashMap<String, Tunnel>>,
     reverse: Mutex<HashMap<String, ReverseTarget>>,
+    pub(crate) vpn: Mutex<HashMap<String, crate::vpn::PacketSession>>,
     pub(crate) cancel: CancellationToken,
     pub(crate) tasks: TaskTracker,
     events: broadcast::Sender<Value>,
@@ -154,6 +159,7 @@ impl Node {
             dialing: tokio::sync::Mutex::new(()),
             tunnels: Mutex::default(),
             reverse: Mutex::default(),
+            vpn: Mutex::default(),
             cancel: CancellationToken::new(),
             tasks: TaskTracker::new(),
             events,
@@ -496,6 +502,7 @@ impl Node {
                 _ = conn.closed() => break Ok(()),
                 Some(_) = streams.join_next(), if !streams.is_empty() => {},
                 path = paths.next() => { if path.is_some() { self.emit(json!({"event":"path","peer":conn.remote_id().to_string(),"path":connection_path(&conn)})); } },
+                datagram = conn.read_datagram() => { match datagram { Ok(p) => self.receive_packet(&conn, p), Err(_) => break Ok(()) } },
                 stream = conn.accept_bi() => {
                     let (send, recv) = match stream { Ok(s) => s, Err(e) => break Err(e.into()) };
                     if streams.len() >= 64 { drop((send, recv)); continue; }
@@ -548,6 +555,7 @@ impl Node {
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, target.cancel).await;
                 }
+                Request::Vpn { routes, session } => return self.accept_vpn(conn.clone(), p.policy, routes, session, send, recv).await,
                 Request::Pair { .. } => bail!("already paired"),
             }
             Ok(())

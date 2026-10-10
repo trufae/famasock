@@ -5,3 +5,4 @@ pub mod tcp;
 pub mod wire;
 pub use node::Node;
 pub mod socks;
+pub mod vpn;
