@@ -30,6 +30,8 @@ def verifierVersion = verifier.group(1)
 
 dependencies {
     implementation "org.rustls:rustls-platform-verifier:${verifierVersion}"
+    // The verifier AAR has Kotlin bytecode but its POM omits the runtime.
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.0'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test:rules:1.6.1'
