@@ -99,7 +99,7 @@ pub unsafe extern "C" fn famasock_command(
                 h.packets.lock().unwrap().insert(id.clone(),Arc::new(AsyncMutex::new(packets)));
                 return Ok(json!({"id":id,"local_ip":local_ip,"remote_ip":remote_ip,"routes":routes,"mtu":crate::vpn::MTU}));
             }
-            if input["op"] == "stop_vpn" { if let Some(id)=input["id"].as_str() { h.packets.lock().unwrap().remove(id); } }
+            if input["op"] == "stop_vpn" && let Some(id)=input["id"].as_str() { h.packets.lock().unwrap().remove(id); }
             let command: Command = serde_json::from_value(input)?;
             tokio::select! { r = h.node.command(command) => r, _ = h.node.cancel.cancelled() => anyhow::bail!("core stopped") }
         })

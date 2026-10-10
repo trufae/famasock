@@ -37,10 +37,10 @@ impl AsyncWrite for Duplex {
         b: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let r = AsyncWrite::poll_write(Pin::new(&mut self.send), cx, b);
-        if let Poll::Ready(Ok(n)) = &r {
-            if *n > 0 {
-                *self.last_io.lock().unwrap() = tokio::time::Instant::now();
-            }
+        if let Poll::Ready(Ok(n)) = &r
+            && *n > 0
+        {
+            *self.last_io.lock().unwrap() = tokio::time::Instant::now();
         }
         r
     }
