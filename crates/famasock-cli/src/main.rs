@@ -154,6 +154,34 @@ async fn serve(path: &Path, name: &str, offline: bool) -> Result<()> {
     std::fs::remove_file(sockpath)?;
     Ok(())
 }
+// A cancellable nonblocking terminal read: never leave a spawn_blocking stdin
+// worker alive after Ctrl-C or after an invitation expires.
+async fn terminal_line() -> Result<String> {
+    use std::{io::Read, os::unix::fs::OpenOptionsExt};
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open("/dev/tty")
+        .context("approval requires a terminal; use famasock approve from another terminal")?;
+    let fd = tokio::io::unix::AsyncFd::new(file)?;
+    let mut bytes = Vec::new();
+    loop {
+        let mut ready = fd.readable().await?;
+        let mut chunk = [0; 256];
+        match ready.try_io(|fd| fd.get_ref().read(&mut chunk)) {
+            Ok(Ok(0)) => anyhow::bail!("terminal closed"),
+            Ok(Ok(n)) => {
+                bytes.extend_from_slice(&chunk[..n]);
+                ensure!(bytes.len() <= 256, "answer too long");
+                if bytes.contains(&b'\n') {
+                    return Ok(String::from_utf8(bytes)?);
+                }
+            }
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {}
+        }
+    }
+}
 async fn pair(path: &Path, accept: Option<String>) -> Result<()> {
     if let Some(uri) = accept {
         let uri = if uri == "-" {
@@ -199,11 +227,7 @@ async fn pair(path: &Path, accept: Option<String>) -> Result<()> {
                     "Device: {}\nIdentity: {}\nApprove pairing? [y/N]",
                     p["name"], p["peer"]
                 );
-                let answer = tokio::task::spawn_blocking(|| {
-                    let mut s = String::new();
-                    std::io::stdin().read_line(&mut s).map(|_| s)
-                })
-                .await??;
+                let answer = terminal_line().await?;
                 rpc(
                     path,
                     &Command::Approve {
@@ -217,7 +241,7 @@ async fn pair(path: &Path, accept: Option<String>) -> Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     };
-    let result = tokio::select! { r = tokio::time::timeout(std::time::Duration::from_secs(300),result) => r?, _ = tokio::signal::ctrl_c() => Ok(()) };
+    let result = tokio::select! { r = tokio::time::timeout(std::time::Duration::from_secs(300),result) => r.unwrap_or_else(|e| Err(e.into())), _ = tokio::signal::ctrl_c() => Ok(()) };
     let _ = rpc(path, &Command::CancelInvite { id }).await;
     result
 }

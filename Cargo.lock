@@ -785,6 +785,7 @@ dependencies = [
  "anyhow",
  "clap",
  "famasock",
+ "libc",
  "qrcode",
  "serde_json",
  "tokio",
