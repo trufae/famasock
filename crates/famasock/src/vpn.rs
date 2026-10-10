@@ -205,6 +205,13 @@ impl Node {
         .await?;
         let local: Ipv4Addr = serde_json::from_value(info["client_ip"].clone())?;
         let remote: Ipv4Addr = serde_json::from_value(info["server_ip"].clone())?;
+        ensure!(
+            local.is_private()
+                && remote.is_private()
+                && local != remote
+                && info["mtu"].as_u64() == Some(MTU as u64),
+            "invalid VPN address or MTU negotiation"
+        );
         let (tunnel, cancel) = self.add_tunnel(
             conn.remote_id().to_string(),
             "vpn",
