@@ -22,7 +22,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 Gradle invokes CMake, which builds the locked Rust library for each ABI and links
 the JNI shared library. Rust must be on Android Studio's inherited PATH. The
 wrapper pins Gradle 8.11.1 with its distribution SHA-256. Dependencies come from
-Google Maven and Maven Central. Release signing credentials are deliberately not
+Google Maven, Maven Central and the upstream rustls verifier Maven archive.
+The verifier JVM component version is read from Cargo.lock. JNI installs a
+process-lifetime Application context for Android system DNS and TLS verification
+before the first Rust endpoint is opened. Release signing credentials are deliberately not
 part of this repository; configure your own signing for distribution. CI uploads
 an installable debug APK and test/lint reports.
 

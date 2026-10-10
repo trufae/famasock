@@ -50,13 +50,14 @@ public final class NetworkService extends VpnService {
         lifecycle.execute(() -> {
             try {
                 byte[] key = Identity.load(this);
-                try { core = new RustCore(new File(getNoBackupFilesDir(), "state").getPath(), key); }
+                try { core = new RustCore(this, new File(getNoBackupFilesDir(), "state").getPath(), key); }
                 finally { Arrays.fill(key, (byte)0); }
                 new Thread(() -> {
                     try {
                         while (!stopping) {
                             JSONObject event = core.event();
                             if (event == null) break;
+                            if ("access_request".equals(event.optString("event"))) android.util.Log.i("Famasock", event.toString());
                             if (event.has("error")) error = event.optString("error");
                             changed();
                         }

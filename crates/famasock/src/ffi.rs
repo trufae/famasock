@@ -282,3 +282,34 @@ mod tests {
         }
     }
 }
+
+/// Install the process-lifetime Application context before constructing endpoints.
+/// The C JNI bridge supplies the current environment and a live Application object.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn famasock_android_init<'local>(
+    mut unowned: jni::EnvUnowned<'local>,
+    context: jni::objects::JObject<'local>,
+) {
+    use jni::{errors::ThrowRuntimeExAndDefault, objects::JObject, refs::Global};
+    static CONTEXT: Mutex<Option<Global<JObject<'static>>>> = Mutex::new(None);
+    unowned
+        .with_env(|env| {
+            let mut stored = CONTEXT.lock().unwrap();
+            if stored.is_none() {
+                let global = env.new_global_ref(&context)?;
+                let vm = env.get_java_vm()?;
+                // SAFETY: the VM lives for the process; CONTEXT retains a global
+                // Application reference for the same lifetime. Called once only.
+                unsafe {
+                    ndk_context::initialize_android_context(
+                        vm.get_raw().cast(),
+                        global.as_raw().cast(),
+                    );
+                }
+                *stored = Some(global);
+            }
+            rustls_platform_verifier::android::init_with_env(env, context)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
