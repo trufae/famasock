@@ -26,6 +26,50 @@ pub struct Policy {
     #[serde(default)]
     pub vpn: Option<VpnPolicy>,
 }
+impl Policy {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.services.len() <= 32
+                && self.socks_networks.len() <= 64
+                && self.socks_ports.len() <= 64
+                && self.reverse_ports.len() <= 32,
+            "policy limit exceeded"
+        );
+        for (name, address) in &self.services {
+            crate::pairing::validate_name(name)?;
+            let address: std::net::SocketAddr = address
+                .parse()
+                .context("service destination must be a numeric IP:port")?;
+            ensure!(address.port() != 0, "service port must be nonzero");
+        }
+        ensure!(
+            !self.socks_ports.contains(&0) && !self.reverse_ports.contains(&0),
+            "permission ports must be nonzero"
+        );
+        if let Some(vpn) = &self.vpn {
+            ensure!(
+                !vpn.routes.is_empty() && vpn.routes.len() <= 16,
+                "specify 1–16 VPN routes"
+            );
+            ensure!(
+                vpn.peer_ip.is_private()
+                    && vpn.local_ip.is_private()
+                    && vpn.peer_ip != vpn.local_ip,
+                "VPN needs distinct private IPv4 addresses"
+            );
+            ensure!(
+                !vpn.tun.is_empty()
+                    && vpn.tun.len() < 16
+                    && vpn
+                        .tun
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+                "invalid TUN name"
+            );
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VpnPolicy {
@@ -136,6 +180,10 @@ impl Store {
             }
         };
         ensure!(state.version == 1, "unsupported state version");
+        ensure!(state.peers.len() <= 64, "peer limit exceeded");
+        for peer in state.peers.values() {
+            peer.policy.validate()?;
+        }
         let store = Self {
             state,
             key,

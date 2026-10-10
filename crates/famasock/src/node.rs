@@ -266,11 +266,23 @@ impl Node {
         Ok(matches[0].clone())
     }
     pub fn set_policy(&self, peer: &str, policy: Policy) -> Result<()> {
+        policy.validate()?;
         let id = self.peer(peer)?.addr.id.to_string();
-        self.store
-            .lock()
-            .unwrap()
-            .update(|s| s.peers.get_mut(&id).unwrap().policy = policy)?;
+        {
+            let mut store = self.store.lock().unwrap();
+            ensure!(store.state.peers.contains_key(&id), "peer removed");
+            if let Some(vpn) = &policy.vpn {
+                ensure!(
+                    !store.state.peers.iter().any(|(other, p)| other != &id
+                        && p.policy
+                            .vpn
+                            .as_ref()
+                            .is_some_and(|v| v.tun == vpn.tun || v.peer_ip == vpn.peer_ip)),
+                    "VPN TUN and client IP must be unique per peer"
+                );
+            }
+            store.update(|s| s.peers.get_mut(&id).unwrap().policy = policy)?;
+        }
         self.disconnect(&id);
         self.emit(json!({"event":"peers_changed"}));
         Ok(())
@@ -278,10 +290,11 @@ impl Node {
     pub fn rename(&self, peer: &str, name: &str) -> Result<()> {
         pairing::validate_name(name)?;
         let id = self.peer(peer)?.addr.id.to_string();
-        self.store
-            .lock()
-            .unwrap()
-            .update(|s| s.peers.get_mut(&id).unwrap().name = name.into())?;
+        {
+            let mut store = self.store.lock().unwrap();
+            ensure!(store.state.peers.contains_key(&id), "peer removed");
+            store.update(|s| s.peers.get_mut(&id).unwrap().name = name.into())?;
+        }
         self.emit(json!({"event":"peers_changed"}));
         Ok(())
     }
@@ -371,6 +384,11 @@ impl Node {
         pairing::validate_name(&name)?;
         pairing::validate_name(&device)?;
         ensure!(addr.id == conn.remote_id(), "identity mismatch");
+        ensure!(addr.addrs.len() <= 16, "too many peer addresses");
+        ensure!(
+            self.store.lock().unwrap().state.peers.len() < 64,
+            "peer limit reached"
+        );
         let expires = {
             let mut invites = self.invitations.lock().unwrap();
             let i = invites.get(&id).context("invitation unavailable")?;
@@ -410,14 +428,22 @@ impl Node {
             matches!(result, Ok(Ok(true))),
             "pairing rejected or timed out"
         );
-        self.store.lock().unwrap().update(|s| {
-            s.peers.entry(conn.remote_id().to_string()).or_insert(peer);
-        })?;
+        {
+            let mut store = self.store.lock().unwrap();
+            ensure!(store.state.peers.len() < 64, "peer limit reached");
+            store.update(|s| {
+                s.peers.entry(conn.remote_id().to_string()).or_insert(peer);
+            })?;
+        }
         self.emit(json!({"event":"paired","peer":conn.remote_id().to_string()}));
         Ok(json!({"name":self.store.lock().unwrap().state.name,"addr":self.endpoint.addr()}))
     }
     pub async fn pair(self: &Arc<Self>, uri: &str, device: &str) -> Result<String> {
         let invite = Invitation::parse(uri)?;
+        ensure!(
+            self.store.lock().unwrap().state.peers.len() < 64,
+            "peer limit reached"
+        );
         let cancel = self.cancel.child_token();
         {
             let mut current = self.pairing.lock().unwrap();
