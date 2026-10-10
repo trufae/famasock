@@ -235,3 +235,40 @@ async fn initiator_cancellation_closes_connection_and_clears_approval() {
     phone.shutdown().await;
     home.shutdown().await;
 }
+
+#[tokio::test]
+async fn simultaneous_peers_keep_permissions_and_revocation_isolated() {
+    let (_a, _b, home, phone) = nodes().await;
+    let third = tempfile::tempdir().unwrap();
+    let laptop = Node::open(third.path(), "laptop", None, true)
+        .await
+        .unwrap();
+    let home_id = pair(&home, &phone).await;
+    pair(&home, &laptop).await;
+    let (addr, echo) = echo().await;
+    let mut policy = Policy::default();
+    policy.services.insert("echo".into(), addr.to_string());
+    home.set_policy(&phone.endpoint.id().to_string(), policy.clone())
+        .unwrap();
+    assert_eq!(
+        laptop.services(&home_id).await.unwrap()["services"],
+        serde_json::json!([])
+    );
+    home.set_policy(&laptop.endpoint.id().to_string(), policy)
+        .unwrap();
+    let (a, b) = tokio::join!(
+        phone.forward(&home_id, "127.0.0.1:0".parse().unwrap(), "echo".into()),
+        laptop.forward(&home_id, "127.0.0.1:0".parse().unwrap(), "echo".into())
+    );
+    let a = local_listener(&phone, &a.unwrap());
+    let b = local_listener(&laptop, &b.unwrap());
+    tokio::join!(roundtrip(a, 17), roundtrip(b, 29));
+    home.revoke(&phone.endpoint.id().to_string()).unwrap();
+    assert!(phone.services(&home_id).await.is_err());
+    roundtrip(b, 31).await;
+    assert_eq!(home.snapshot()["peers"].as_array().unwrap().len(), 1);
+    laptop.shutdown().await;
+    phone.shutdown().await;
+    home.shutdown().await;
+    echo.abort();
+}
