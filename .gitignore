@@ -7,3 +7,7 @@ apps/ios/Frameworks/
 
 __pycache__/
 .pmai/
+apps/android/.gradle/
+apps/android/local.properties
+apps/android/**/build/
+apps/android/**/.cxx/
