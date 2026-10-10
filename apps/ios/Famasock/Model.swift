@@ -90,7 +90,10 @@ final class Model: ObservableObject {
     }
     func pair(_ uri: String) async {
         pairing = true; defer { pairing = false }
-        await run(["op": "pair", "uri": uri.trimmingCharacters(in: .whitespacesAndNewlines), "device": "iOS"])
+        do {
+            _ = try await request(["op": "pair", "uri": uri.trimmingCharacters(in: .whitespacesAndNewlines), "device": "iOS"])
+            await refresh()
+        } catch { if error.localizedDescription != "pairing cancelled" { self.error = error.localizedDescription } }
     }
     func startVPN(peer: String, routes: [String], dns: String) async {
         guard !vpnRunning else { return }

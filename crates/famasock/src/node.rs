@@ -75,6 +75,18 @@ impl Reply {
         Ok(self.data)
     }
 }
+struct PairAttempt<'a>(&'a Mutex<Option<CancellationToken>>);
+impl Drop for PairAttempt<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().take();
+    }
+}
+struct PairConnection(Connection);
+impl Drop for PairConnection {
+    fn drop(&mut self) {
+        self.0.close(0u32.into(), b"pairing finished");
+    }
+}
 struct PendingGuard<'a>(&'a Mutex<HashMap<String, Pending>>, String);
 impl Drop for PendingGuard<'_> {
     fn drop(&mut self) {
@@ -102,6 +114,7 @@ pub struct Node {
     pub endpoint: Endpoint,
     pub(crate) store: Mutex<Store>,
     invitations: Mutex<HashMap<String, Invitation>>,
+    pairing: Mutex<Option<CancellationToken>>,
     pending: Mutex<HashMap<String, Pending>>,
     connections: Mutex<HashMap<String, Vec<Connection>>>,
     dialing: tokio::sync::Mutex<()>,
@@ -160,6 +173,7 @@ impl Node {
             endpoint,
             store: Mutex::new(store),
             invitations: Mutex::default(),
+            pairing: Mutex::default(),
             pending: Mutex::default(),
             connections: Mutex::default(),
             dialing: tokio::sync::Mutex::new(()),
@@ -404,6 +418,24 @@ impl Node {
     }
     pub async fn pair(self: &Arc<Self>, uri: &str, device: &str) -> Result<String> {
         let invite = Invitation::parse(uri)?;
+        let cancel = self.cancel.child_token();
+        {
+            let mut current = self.pairing.lock().unwrap();
+            ensure!(current.is_none(), "another pairing attempt is active");
+            *current = Some(cancel.clone());
+        }
+        let _attempt = PairAttempt(&self.pairing);
+        tokio::select! {
+            _ = cancel.cancelled() => bail!("pairing cancelled"),
+            result = self.pair_invitation(invite, device) => result,
+        }
+    }
+    pub fn cancel_pair(&self) {
+        if let Some(cancel) = self.pairing.lock().unwrap().as_ref() {
+            cancel.cancel();
+        }
+    }
+    async fn pair_invitation(self: &Arc<Self>, invite: Invitation, device: &str) -> Result<String> {
         ensure!(
             invite.addr.id != self.endpoint.id(),
             "cannot pair with self"
@@ -413,6 +445,7 @@ impl Node {
             self.endpoint.connect(invite.addr.clone(), wire::ALPN),
         )
         .await??;
+        let _connection = PairConnection(conn.clone());
         let result = async {
             let (mut send, mut recv) = conn.open_bi().await?;
             let name = self.store.lock().unwrap().state.name.clone();
