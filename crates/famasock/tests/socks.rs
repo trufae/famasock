@@ -1,0 +1,60 @@
+mod common;
+use common::*;
+use famasock::store::Policy;
+use fast_socks5::client::{Config, Socks5Stream};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[tokio::test]
+async fn socks_connect_remote_dns_and_destination_denial() {
+    let (_a, _b, home, phone) = nodes().await;
+    let home_id = pair(&home, &phone).await;
+    let (addr, echo) = echo().await;
+    let id = phone
+        .socks(&home_id, "127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let listen = local_listener(&phone, &id);
+    assert!(
+        Socks5Stream::connect(listen, "localhost".into(), addr.port(), Config::default())
+            .await
+            .is_err()
+    );
+    let policy = Policy {
+        socks_networks: vec!["127.0.0.1/32".parse().unwrap(), "::1/128".parse().unwrap()],
+        socks_ports: vec![addr.port()],
+        ..Default::default()
+    };
+    home.set_policy(&phone.endpoint.id().to_string(), policy)
+        .unwrap();
+    for host in ["localhost", "127.0.0.1"] {
+        let mut socket = Socks5Stream::connect(listen, host.into(), addr.port(), Config::default())
+            .await
+            .unwrap();
+        socket.write_all(b"SOCKS via QUIC").await.unwrap();
+        socket.shutdown().await.unwrap();
+        let mut received = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, b"SOCKS via QUIC");
+    }
+    assert!(
+        Socks5Stream::connect(
+            listen,
+            "169.254.169.254".into(),
+            addr.port(),
+            Config::default()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        Socks5Stream::connect(listen, "127.0.0.1".into(), 1, Config::default())
+            .await
+            .is_err()
+    );
+    phone.shutdown().await;
+    home.shutdown().await;
+    echo.abort();
+}

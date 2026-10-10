@@ -43,6 +43,10 @@ pub(crate) enum Request {
     Tcp {
         service: String,
     },
+    Socks {
+        host: String,
+        port: u16,
+    },
     Reverse {
         port: u16,
         id: String,
@@ -521,6 +525,11 @@ impl Node {
                 Request::Tcp { service } => {
                     let destination = p.policy.services.get(&service).context("service not authorized")?;
                     let tcp = timeout(SETUP_TIMEOUT, TcpStream::connect(destination)).await??;
+                    wire::write(&mut send, &Reply::ok(Value::Null)).await?;
+                    return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
+                }
+                Request::Socks { host, port } => {
+                    let tcp = crate::socks::connect_allowed(&p.policy, &host, port).await?;
                     wire::write(&mut send, &Reply::ok(Value::Null)).await?;
                     return crate::tcp::bridge(tcp, send, recv, self.cancel.clone()).await;
                 }
