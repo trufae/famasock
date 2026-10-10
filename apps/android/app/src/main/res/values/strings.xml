@@ -1,4 +1,5 @@
 <resources>
+    <color name="icon_background">#003D42</color>
     <string name="app_name">Famasock</string>
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>

@@ -28,13 +28,18 @@ for name,ext in [('PacketTunnel','appex'),('Famasock','app')]:
     shell=obj(name+'/rust','isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); shellPath = /bin/sh; shellScript = '+quote('"$SRCROOT/build-rust.sh"')+'; alwaysOutOfDate = 1; runOnlyForDeploymentPostprocessing = 0;')
     phases=[shell,phase]; deps=[]
     if ext=='app':
+        asset='Famasock/Assets.xcassets'
+        assetfile=obj('file/'+asset,'isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = '+quote(asset)+'; sourceTree = "<group>";')
+        refs.append(assetfile)
+        assetbuild=obj(name+'/build/'+asset,'isa = PBXBuildFile; fileRef = '+assetfile+';')
+        phases.append(obj(name+'/resources','isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = '+arr([assetbuild])+'; runOnlyForDeploymentPostprocessing = 0;'))
         copyfile=obj('embed/build','isa = PBXBuildFile; fileRef = '+ident('PacketTunnel/product')+'; settings = { ATTRIBUTES = (RemoveHeadersOnCopy,); };')
         phases.append(obj('embed','isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = '+arr([copyfile])+'; name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0;'))
         proxy=obj('extension/proxy','isa = PBXContainerItemProxy; containerPortal = '+ident('project')+'; proxyType = 1; remoteGlobalIDString = '+ident('PacketTunnel/target')+'; remoteInfo = PacketTunnel;')
         deps.append(obj('extension/dep','isa = PBXTargetDependency; target = '+ident('PacketTunnel/target')+'; targetProxy = '+proxy+';'))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':'org.radare.famasock'+('.PacketTunnel' if ext=='appex' else ''),'INFOPLIST_FILE':name+'/Info.plist','CODE_SIGN_ENTITLEMENTS':name+'/'+name+'.entitlements','CODE_SIGN_STYLE':'Automatic','SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator','TARGETED_DEVICE_FAMILY':'1,2','SWIFT_OBJC_BRIDGING_HEADER':'Shared/famasock.h','OTHER_LDFLAGS':'$(inherited) "$(DERIVED_FILE_DIR)/libfamasock.a" -framework Security -framework SystemConfiguration -framework Network -framework CoreFoundation -lresolv -liconv','ENABLE_USER_SCRIPT_SANDBOXING':'NO','ONLY_ACTIVE_ARCH':'YES','FAMASOCK_APP_GROUP':'group.org.radare.famasock','FAMASOCK_KEYCHAIN_GROUP':'org.radare.famasock.shared','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks','GENERATE_INFOPLIST_FILE':'NO'}
     if ext=='appex': settings.update(APPLICATION_EXTENSION_API_ONLY='YES',SKIP_INSTALL='YES')
-    else: settings['SKIP_INSTALL']='NO'
+    else: settings.update(SKIP_INSTALL='NO',ASSETCATALOG_COMPILER_APPICON_NAME='AppIcon')
     target=obj(name+'/target','isa = PBXNativeTarget; buildConfigurationList = '+configs(name,settings)+'; buildPhases = '+arr(phases)+'; buildRules = (); dependencies = '+arr(deps)+'; name = '+name+'; productName = '+name+'; productReference = '+product+'; productType = '+quote('com.apple.product-type.application' if ext=='app' else 'com.apple.product-type.app-extension')+';')
     targets[name]=target
 prodgroup=obj('products','isa = PBXGroup; children = '+arr(products)+'; name = Products; sourceTree = "<group>";')
