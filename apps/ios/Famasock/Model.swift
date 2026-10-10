@@ -39,6 +39,7 @@ final class Model: ObservableObject {
     var vpnRunning: Bool { [.connected, .connecting, .reasserting, .disconnecting].contains(vpnStatus) }
 
     func start() async {
+        guard observer == nil else { return }
         do {
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
             manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Bundle.main.bundleIdentifier! + ".PacketTunnel" }
@@ -51,13 +52,27 @@ final class Model: ObservableObject {
                 }
             }
             if !vpnRunning { await openCore() } else { refreshVPNStats() }
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            self.error = error.localizedDescription
+            await openCore()
+        }
     }
     func openCore() async {
         guard core == nil && !opening && !vpnRunning else { return }
         opening = true; defer { opening = false }
         do {
-            let core = try await Task.detached { try RustCore() }.value
+            let core = try await Task.detached {
+                // NEVPNStatus can change before the extension releases its state lock.
+                // Retry only that handoff race, with a bounded wait; preserve other errors.
+                for attempt in 0..<6 {
+                    do { return try RustCore() }
+                    catch {
+                        guard attempt < 5, error.localizedDescription.contains("state is already in use") else { throw error }
+                        try await Task.sleep(nanoseconds: UInt64(100_000_000) << attempt)
+                    }
+                }
+                throw FamasockError(message: "VPN has not released networking yet")
+            }.value
             self.core = core; ready = true
             core.events { [weak self] event in
                 Task { @MainActor [weak self] in
