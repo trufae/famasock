@@ -45,6 +45,41 @@ async fn pairing_requires_approval_and_is_single_use() {
     home.shutdown().await;
 }
 #[tokio::test]
+async fn pairing_again_requires_approval_and_preserves_permissions() {
+    let (_a, _b, home, phone) = nodes().await;
+    let home_id = pair(&home, &phone).await;
+    let phone_id = phone.endpoint.id().to_string();
+    home.rename(&phone_id, "My iPhone").unwrap();
+    home.set_policy(&phone_id, Policy { restricted: true, ..Default::default() }).unwrap();
+    // The server still knows the identity even if the client lost its peer record.
+    phone.revoke(&home_id).unwrap();
+    let invite = home.invitation().unwrap();
+    let uri = invite.uri().unwrap();
+    let p = phone.clone();
+    let u = uri.clone();
+    let task = tokio::spawn(async move { p.pair(&u, "iPhone").await });
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if !home.pending().as_array().unwrap().is_empty() { break; }
+            assert!(!task.is_finished(), "re-pairing closed before showing approval");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    assert!(!task.is_finished(), "re-pairing must wait for approval");
+    home.approve(&invite.id, true).unwrap();
+    assert_eq!(task.await.unwrap().unwrap(), home_id);
+    let peer = &home.snapshot()["peers"][0];
+    assert_eq!(peer["name"], "My iPhone");
+    assert_eq!(peer["policy"]["restricted"], true);
+    assert_eq!(peer["device"], "iPhone");
+    assert_eq!(phone.services(&home_id).await.unwrap()["restricted"], true);
+    let error = phone.pair(&uri, "iPhone").await.unwrap_err().to_string();
+    assert_eq!(error, "invitation unavailable");
+    phone.shutdown().await;
+    home.shutdown().await;
+}
+
+#[tokio::test]
 async fn paired_access_accepts_selected_tcp_destinations_and_reverse_ports_and_logs_them() {
     let (_a, _b, home, phone) = nodes().await;
     let home_id = pair(&home, &phone).await;

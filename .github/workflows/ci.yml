@@ -45,8 +45,8 @@ jobs:
         with:
           key: ios
           cache-on-failure: true
-      - name: Verify generated project
-        run: python3 scripts/generate-xcode.py && git diff --exit-code apps/ios/Famasock.xcodeproj
+      - name: Verify app and extension project wiring
+        run: python3 scripts/check-xcode.py
       - name: Build native app and extension for device (unsigned)
         run: >-
           xcodebuild -project apps/ios/Famasock.xcodeproj -scheme Famasock

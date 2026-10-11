@@ -2,7 +2,7 @@
 
 This repository started empty. History intentionally separates the workspace,
 identity/framing, networking, SOCKS, packet transport, CLI, C ABI, SwiftUI,
-NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
+NetworkExtension, CI and subsequent fixes. Current work is on `main`.
 
 ## Implemented and verified locally
 
@@ -15,7 +15,7 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 - [x] Concurrent TCP forwarding, EOF/half-close and live-session revocation.
 - [x] Paired reverse listeners, optional port restrictions and listener cleanup.
 - [x] SOCKS CONNECT, remote DNS and CIDR/port destination checks.
-- [x] IPv4 packet validation, QUIC datagram transfer and spoofing rejection.
+- [x] IPv4/IPv6 packet validation, bounded QUIC datagram fragmentation and spoofing rejection.
 - [x] C ABI command/event/packet interfaces; blocked-reader shutdown test.
 
 ## Implemented, with platform verification in progress
@@ -24,6 +24,8 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 - [x] Socket-only forwarding/SOCKS require no TUN or root; CLI smoke test
       explicitly refuses root execution. Privileged kernel tests are separate.
 - [x] Native SwiftUI peers, scanner, permission editor and tunnel screens.
+- [x] Native macOS SwiftUI and Linux GTK4/Vala apps with QR pairing,
+      permissions, forwarding, crypto information and TCP chat consoles.
 - [x] Shared Keychain identity and app/extension endpoint ownership handoff.
 - [x] NEPacketTunnelProvider and Xcode project/build configuration.
 - [x] Linux TUN attachment and per-peer VPN policies.
@@ -37,10 +39,14 @@ NetworkExtension, CI and subsequent fixes. Work is on `feat/famasock`, PR #1.
 - [x] Forced public relay pairing, transfer and revocation: CI run 38062833960.
       Both endpoints disable direct UDP; local development network cannot reach relays.
 
-The development container permits loopback TCP/UDP but denies AF_UNIX creation
-and has no TUN/CAP_NET_ADMIN. Thus local tests validate real QUIC/TCP/datagrams;
-CLI socket and kernel TUN integration are assigned to CI. macOS/iOS require the
-Apple CI runner. No physical iPhone or signing credentials were used.
+Local validation on macOS and an Ubuntu 24.04 container passed all 22 ordinary
+Rust tests. Strict Clippy and formatting checks passed on macOS. Linux tests ran
+as uid 1001 without TUN or network administration capabilities, covering the
+rootless VPN exit, CLI daemon, GTK bridge and GTK native UI smoke. Native macOS
+and GTK builds passed, as did the unsigned iPhone app/PacketTunnel build and
+Xcode source/extension wiring check. The public-relay test remains an explicit
+CI network check; privileged kernel TUN testing is separate. No physical iPhone
+or signing credentials were used for this validation.
 
 The iOS builds exposed libc 0.2.190 Apple binding removals used by upstream
 netdev/netwatch. The workspace pins libc 0.2.188 until these dependencies migrate
@@ -77,7 +83,7 @@ APK/lint/emulator results; source implementation alone is not device verificatio
 
 ## Next-session entry point
 
-Read this file, inspect PR #1 checks, fix remaining build/test failures first.
+Read this file, inspect the latest `main` CI checks, fix remaining failures first.
 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
 and `cargo test --workspace --locked`. Run the two Python integration scripts on
 a normal Linux host (the kernel script requires a disposable privileged VM).

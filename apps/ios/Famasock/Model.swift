@@ -302,8 +302,11 @@ final class Model: ObservableObject {
     }
     func refresh() async {
         guard core != nil || vpnStatus == .connected else { return }
+        let statusCore = core
+        let previousForwards = Set(forwardCommands.keys)
         do {
             let data = try await request(["op": "status"])
+            guard core === statusCore else { return }
             updateVPNStatus(data)
             peers = (data["peers"] as? [[String: Any]] ?? []).compactMap(Peer.init)
             tunnels = (data["tunnels"] as? [[String: Any]] ?? []).compactMap { t in
@@ -313,7 +316,9 @@ final class Model: ObservableObject {
             }
             if core != nil {
                 let ids = Set(tunnels.map(\.id))
-                forwardCommands = forwardCommands.filter { ids.contains($0.key) }
+                // A forward can finish while this status call is in flight. Only
+                // prune profiles that existed before the snapshot was requested.
+                for id in previousForwards.subtracting(ids) { forwardCommands.removeValue(forKey: id) }
                 try RustCore.saveForwards(Array(forwardCommands.values))
             }
         } catch { self.error = error.localizedDescription }
