@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory() as tmp:
             ip(ns,'link','set',dev,'up');ip(ns,'link','set','lo','up')
             ip(ns,'tuntap','add','dev','famasock0','mode','tun')
             ip(ns,'addr','add',f'10.250.0.{i+1}/32','dev','famasock0')
-            ip(ns,'link','set','famasock0','mtu','1100','up')
+            ip(ns,'link','set','famasock0','mtu','1280','up')
         ip(names[0],'link','add','destination','type','dummy')
         ip(names[0],'addr','add','172.23.0.1/32','dev','destination');ip(names[0],'link','set','destination','up')
         ip(names[0],'route','add','10.250.0.2/32','dev','famasock0')

@@ -126,6 +126,11 @@ final class Model: ObservableObject {
     @Published var pairing = false
     @Published var vpnStatus: NEVPNStatus = .invalid
     @Published var vpnStats = ""
+    @Published var vpnError: String?
+    @Published var vpnHost = ""
+    private var forwardCommands: [String: [String: Any]] = [:]
+    private var userStoppedVPN = false
+    private var poller: Task<Void, Never>?
     private var core: RustCore?
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
@@ -151,7 +156,7 @@ final class Model: ObservableObject {
         guard !starting else { return }
         if observer != nil {
             vpnStatus = manager?.connection.status ?? .disconnected
-            if vpnRunning { refreshVPNStats() } else { await openCore() }
+            if vpnRunning { ready = vpnStatus == .connected; refreshVPNStats() } else { await openCore() }
             return
         }
         starting = true; defer { starting = false }
@@ -162,11 +167,33 @@ final class Model: ObservableObject {
             observer = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    let previous = self.vpnStatus
                     self.vpnStatus = self.manager?.connection.status ?? .disconnected
-                    if !self.vpnRunning { await self.openCore() }
+                    self.ready = self.core != nil || self.vpnStatus == .connected
+                    if self.vpnStatus == .connected { self.refreshVPNStats() }
+                    else if !self.vpnRunning {
+                        if [.connecting, .connected, .reasserting].contains(previous), !self.userStoppedVPN {
+                            self.vpnError = RustCore.vpnError
+                            self.manager?.connection.fetchLastDisconnectError { [weak self] error in
+                                Task { @MainActor [weak self] in
+                                    guard let self, !self.vpnRunning else { return }
+                                    let text = RustCore.vpnError ?? error?.localizedDescription ?? "VPN stopped before connecting. Check the app's Network Extension signing and the server version."
+                                    self.vpnError = text; self.error = text
+                                }
+                            }
+                        }
+                        await self.openCore()
+                    }
                 }
             }
-            if !vpnRunning { await openCore() } else { refreshVPNStats() }
+            if !vpnRunning { await openCore() } else { ready = vpnStatus == .connected; refreshVPNStats() }
+            poller = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let self else { return }
+                    if self.foreground && self.vpnStatus == .connected { await self.refresh() }
+                }
+            }
         } catch {
             self.error = error.localizedDescription
             await openCore()
@@ -198,6 +225,14 @@ final class Model: ObservableObject {
                 return
             }
             self.core = core; ready = true
+            forwardCommands.removeAll()
+            for command in RustCore.savedForwards {
+                do {
+                    let result = try await Task.detached { try core.command(command) }.value
+                    if let id = result["id"] as? String { forwardCommands[id] = command }
+                } catch { self.error = "Cannot restore forwarding: \(error.localizedDescription)" }
+            }
+            try RustCore.saveForwards(Array(forwardCommands.values))
             core.events { [weak self] event in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -213,8 +248,44 @@ final class Model: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func request(_ value: [String: Any]) async throws -> [String: Any] {
-        guard let core else { throw FamasockError(message: "Stop VPN to manage foreground tunnels and peers.") }
-        return try await Task.detached { try core.command(value) }.value
+        let result: [String: Any]
+        if let core {
+            result = try await Task.detached { try core.command(value) }.value
+            let op = value["op"] as? String ?? ""
+            if ["forward", "reverse", "socks"].contains(op), let id = result["id"] as? String { forwardCommands[id] = value }
+            if op == "stop", let id = value["id"] as? String { forwardCommands.removeValue(forKey: id) }
+            if ["forward", "reverse", "socks", "stop"].contains(op) {
+                try RustCore.saveForwards(Array(forwardCommands.values))
+            }
+        } else {
+            guard vpnStatus == .connected, let session = manager?.connection as? NETunnelProviderSession else {
+                throw FamasockError(message: "Networking is not ready. Wait for VPN to connect.")
+            }
+            let message = try JSONSerialization.data(withJSONObject: value)
+            let data: Data = try await withCheckedThrowingContinuation { continuation in
+                // Both completion paths run on MainActor; take the continuation once.
+                var pending: CheckedContinuation<Data, Error>? = continuation
+                let timeout = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(value["op"] as? String == "pair" ? 310 : 30))
+                    if let next = pending { pending = nil; next.resume(throwing: FamasockError(message: "VPN command timed out")) }
+                }
+                do {
+                    try session.sendProviderMessage(message) { data in
+                        Task { @MainActor in
+                            guard let next = pending else { return }; pending = nil; timeout.cancel()
+                            if let data { next.resume(returning: data) }
+                            else { next.resume(throwing: FamasockError(message: "VPN extension did not respond")) }
+                        }
+                    }
+                } catch {
+                    pending = nil; timeout.cancel(); continuation.resume(throwing: error)
+                }
+            }
+            guard let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FamasockError(message: "Invalid VPN response") }
+            if let error = reply["error"] as? String { throw FamasockError(message: error) }
+            result = reply["data"] as? [String: Any] ?? [:]
+        }
+        return result
     }
     @discardableResult
     func run(_ command: [String: Any], success: String? = nil) async -> Bool {
@@ -230,14 +301,20 @@ final class Model: ObservableObject {
         }
     }
     func refresh() async {
-        guard core != nil else { return }
+        guard core != nil || vpnStatus == .connected else { return }
         do {
             let data = try await request(["op": "status"])
+            updateVPNStatus(data)
             peers = (data["peers"] as? [[String: Any]] ?? []).compactMap(Peer.init)
             tunnels = (data["tunnels"] as? [[String: Any]] ?? []).compactMap { t in
                 guard let id = t["id"] as? String, let peer = t["peer"] as? String,
                       let kind = t["kind"] as? String, let detail = t["detail"] as? String else { return nil }
                 return Tunnel(id: id, peer: peer, kind: kind, detail: detail)
+            }
+            if core != nil {
+                let ids = Set(tunnels.map(\.id))
+                forwardCommands = forwardCommands.filter { ids.contains($0.key) }
+                try RustCore.saveForwards(Array(forwardCommands.values))
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -249,9 +326,10 @@ final class Model: ObservableObject {
             await refresh()
         } catch { if error.localizedDescription != "pairing cancelled" { self.error = error.localizedDescription } }
     }
-    func startVPN(peer: String, routes: [String], dns: String) async {
+    func startVPN(peer: String, routes: [String], dns: String, fullInternet: Bool) async {
         guard !vpnRunning && !handoff && !opening else { return }
         handoff = true
+        userStoppedVPN = false; vpnError = nil; error = nil; RustCore.saveVPNError(nil)
         defer { handoff = false }
         do {
             let manager = manager ?? NETunnelProviderManager()
@@ -259,6 +337,7 @@ final class Model: ObservableObject {
             config.providerBundleIdentifier = Bundle.main.bundleIdentifier! + ".PacketTunnel"
             config.serverAddress = "Famasock"
             config.providerConfiguration = ["peer": peer, "routes": routes, "dns": dns]
+            config.includeAllNetworks = fullInternet
             config.disconnectOnSleep = false
             manager.protocolConfiguration = config
             manager.localizedDescription = "Famasock"
@@ -277,24 +356,21 @@ final class Model: ObservableObject {
             await openCore()
         }
     }
-    func stopVPN() { manager?.connection.stopVPNTunnel() }
-    func refreshVPNStats() {
-        guard let session = manager?.connection as? NETunnelProviderSession else { return }
-        do {
-            try session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
-                guard let data else { return }
-                Task { @MainActor [weak self] in
-                    if let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        self?.peers = (value["peers"] as? [[String: Any]] ?? []).compactMap(Peer.init)
-                        let traffic = value["traffic"] as? [String: Any] ?? [:]
-                        let sent = (traffic["sent"] as? NSNumber)?.int64Value ?? 0
-                        let received = (traffic["received"] as? NSNumber)?.int64Value ?? 0
-                        let upload = ByteCountFormatter.string(fromByteCount: sent, countStyle: .binary)
-                        let download = ByteCountFormatter.string(fromByteCount: received, countStyle: .binary)
-                        self?.vpnStats = "Sent \(upload) · Received \(download)"
-                    }
-                }
-            }
-        } catch { self.error = error.localizedDescription }
+    func stopVPN() { userStoppedVPN = true; manager?.connection.stopVPNTunnel() }
+    func refreshVPNStats() { Task { await refresh() } }
+    private func updateVPNStatus(_ value: [String: Any]) {
+        if let vpn = value["vpn"] as? [String: Any] {
+            let server = vpn["remote_ip"] as? String ?? "10.250.0.1"
+            let forwards = vpn["forward_ip"] as? String ?? "10.250.0.3"
+            vpnHost = "Server: \(server) · Forwarded ports: \(forwards)"
+        }
+        if let traffic = value["traffic"] as? [String: Any] {
+            let sent = (traffic["sent"] as? NSNumber)?.int64Value ?? 0
+            let received = (traffic["received"] as? NSNumber)?.int64Value ?? 0
+            vpnStats = "Sent \(ByteCountFormatter.string(fromByteCount: sent, countStyle: .binary)) · Received \(ByteCountFormatter.string(fromByteCount: received, countStyle: .binary))"
+        }
+        for event in value["events"] as? [[String: Any]] ?? [] {
+            if let error = event["error"] as? String { self.error = error }
+        }
     }
 }

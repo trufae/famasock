@@ -4,6 +4,8 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 apps/ios/Frameworks/
+apps/macos/build/
+apps/gtk/build/
 
 __pycache__/
 .pmai/

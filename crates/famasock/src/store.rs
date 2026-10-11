@@ -1,7 +1,7 @@
 //! One owner per state directory; atomic, owner-only persistence.
 use anyhow::{Context, Result, ensure};
 use fs2::FileExt;
-use ipnet::Ipv4Net;
+use ipnet::IpNet;
 use iroh::{EndpointAddr, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -61,8 +61,7 @@ impl Policy {
                 "VPN needs distinct private IPv4 addresses"
             );
             ensure!(
-                !vpn.tun.is_empty()
-                    && vpn.tun.len() < 16
+                vpn.tun.len() < 16
                     && vpn
                         .tun
                         .bytes()
@@ -76,10 +75,11 @@ impl Policy {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VpnPolicy {
-    pub routes: Vec<Ipv4Net>,
+    pub routes: Vec<IpNet>,
     pub local_ip: std::net::Ipv4Addr,
     pub peer_ip: std::net::Ipv4Addr,
-    /// Linux pre-provisioned TUN owned by the daemon user.
+    /// Empty selects the rootless socket exit. Nonempty uses a legacy Linux TUN.
+    #[serde(default)]
     pub tun: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

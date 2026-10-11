@@ -31,7 +31,10 @@ pub fn crypto_info() -> serde_json::Value {
     })
 }
 pub mod control;
+mod exit;
 pub mod socks;
 pub mod vpn;
+#[cfg(test)]
+mod vpn_tests;
 
 pub mod ffi;

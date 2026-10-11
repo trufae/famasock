@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-crate-type = ["rlib", "staticlib"]
+crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 anyhow.workspace = true
@@ -23,6 +23,10 @@ ipnet = { version = "2", features = ["serde"] }
 fast-socks5 = "1"
 bytes = "1"
 futures-util = "0.3"
+qrcode = { version = "0.14", default-features = false }
+netstack-smoltcp = "=0.2.4"
+etherparse = "0.16"
+socket2 = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tun = { version = "0.8", features = ["async"] }
@@ -34,6 +38,7 @@ libc = "=0.2.188"
 
 [dev-dependencies]
 tempfile = "3"
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22.4"

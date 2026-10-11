@@ -55,7 +55,7 @@ pub(crate) enum Request {
         id: String,
     },
     Vpn {
-        routes: Vec<ipnet::Ipv4Net>,
+        routes: Vec<ipnet::IpNet>,
         session: String,
     },
 }
@@ -156,6 +156,8 @@ impl Node {
             )
             .max_idle_timeout(Some(Duration::from_secs(60).try_into()?))
             .keep_alive_interval(Duration::from_secs(20))
+            .datagram_receive_buffer_size(Some(256 * 1024))
+            .datagram_send_buffer_size(256 * 1024)
             .build();
         let mut builder = Endpoint::builder(presets::N0)
             .secret_key(store.key.clone())
@@ -294,10 +296,9 @@ impl Node {
             if let Some(vpn) = &policy.vpn {
                 ensure!(
                     !store.state.peers.iter().any(|(other, p)| other != &id
-                        && p.policy
-                            .vpn
-                            .as_ref()
-                            .is_some_and(|v| v.tun == vpn.tun || v.peer_ip == vpn.peer_ip)),
+                        && p.policy.vpn.as_ref().is_some_and(|v| !v.tun.is_empty()
+                            && !vpn.tun.is_empty()
+                            && (v.tun == vpn.tun || v.peer_ip == vpn.peer_ip))),
                     "VPN TUN and client IP must be unique per peer"
                 );
             }
@@ -626,7 +627,7 @@ impl Node {
             let request: Request = timeout(SETUP_TIMEOUT, wire::read(&mut recv)).await??;
             let p = Self::checked(&mut send, self.peer(&conn.remote_id().to_string())).await?;
             match request {
-                Request::Services => { wire::write(&mut send, &Reply::ok(json!({"services":p.policy.services.keys().collect::<Vec<_>>(),"restricted":p.policy.restricted,"socks":!p.policy.restricted || !p.policy.socks_networks.is_empty(),"reverse_ports":p.policy.reverse_ports,"vpn":p.policy.vpn}))).await?; send.finish()?; }
+                Request::Services => { wire::write(&mut send, &Reply::ok(json!({"version":crate::VERSION,"services":p.policy.services.keys().collect::<Vec<_>>(),"restricted":p.policy.restricted,"socks":!p.policy.restricted || !p.policy.socks_networks.is_empty(),"reverse_ports":p.policy.reverse_ports,"vpn":p.policy.vpn,"vpn_available":!p.policy.restricted || p.policy.vpn.is_some(),"vpn_packet_format":2}))).await?; send.finish()?; }
                 Request::Tcp { service } => {
                     let tcp = Self::checked(&mut send, async {
                         let destination = match p.policy.services.get(&service) {

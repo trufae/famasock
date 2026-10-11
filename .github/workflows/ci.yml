@@ -108,3 +108,34 @@ jobs:
           path: |
             apps/android/app/build/outputs/apk/debug/*.apk
             apps/android/app/build/reports/
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ runner.os }}
+      - name: SwiftUI macOS app
+        if: runner.os == 'macOS'
+        run: ./apps/macos/build.sh
+      - name: GTK development dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libjson-glib-dev valac meson ninja-build xvfb xauth dbus-x11
+      - name: GTK4/Vala app and bridge test
+        if: runner.os == 'Linux'
+        run: ./apps/gtk/build.sh && meson test -C apps/gtk/build --print-errorlogs
+      - name: GTK native UI smoke
+        if: runner.os == 'Linux'
+        run: >-
+          FAMASOCK_STATE=$RUNNER_TEMP/famasock-ui-test FAMASOCK_UI_SMOKE=1
+          G_DEBUG=fatal-criticals xvfb-run -a dbus-run-session -- apps/gtk/build/famasock-gtk
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: Famasock-macOS
+          path: apps/macos/build/Famasock.app

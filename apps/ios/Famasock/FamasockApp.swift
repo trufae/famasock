@@ -34,7 +34,7 @@ struct PeersView: View {
                         Label(model.vpnStatusText, systemImage: "network.badge.shield.half.filled")
                         Button("Disconnect VPN") { model.stopVPN() }
                         Button("Transfer status") { model.refreshVPNStats() }
-                        if !model.vpnStats.isEmpty { Text(model.vpnStats).font(.caption.monospaced()) }
+                        if !model.vpnStats.isEmpty { Text(model.vpnStats).font(.caption.monospaced()) }; if !model.vpnHost.isEmpty { Text(model.vpnHost).font(.caption.monospaced()).textSelection(.enabled) }
                     }
                 }
                 Section("Paired devices") {
@@ -49,7 +49,7 @@ struct PeersView: View {
                     }
                 }
                 Section {
-                    Text("Port forwarding and SOCKS run while this app is active. VPN uses the system's Packet Tunnel extension to continue in the background.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Enable VPN to keep port forwarding and SOCKS active when switching apps. VPN can route only your forwarded ports or all internet traffic.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Tools") {
                     NavigationLink("TCP test client") { TCPClientView() }
@@ -161,7 +161,7 @@ struct PeerView: View {
                     ForEach(model.tunnels.filter { $0.peer == peerID }) { t in
                         VStack(alignment: .leading) {
                             Text("\(t.kind): \(t.detail)").font(.caption)
-                            Button("Stop", role: .destructive) { Task { await model.run(["op": "stop", "id": t.id]) } }
+                            Button("Stop", role: .destructive) { if t.kind == "vpn" { model.stopVPN() } else { Task { await model.run(["op": "stop", "id": t.id]) } } }
                         }
                     }
                 }
@@ -184,8 +184,8 @@ struct PeerView: View {
         .sheet(isPresented: $showPolicy) {
             NavigationStack {
                 Form {
-                    Toggle("Allow any TCP connection from this peer", isOn: $allowAll)
-                    Text("This controls access to this iPhone. Paired TCP, SOCKS and reverse-forward requests are accepted and logged by default. Turn this off to use the service and port restrictions below. VPN still needs its interface and route configuration.").font(.footnote)
+                    Toggle("Allow connections from this paired peer", isOn: $allowAll)
+                    Text("This controls access to this iPhone. Paired TCP, UDP VPN, SOCKS and reverse-forward requests are accepted and logged by default. Turn this off to use the service, port and VPN route restrictions below.").font(.footnote)
                     DisclosureGroup("Service, port and VPN settings") {
                         TextEditor(text: $policy).font(.caption.monospaced()).frame(minHeight: 260)
                     }
@@ -286,7 +286,10 @@ struct ForwardView: View {
                     if await model.run(command, success: "Forwarding started on \(listenerName) \(listenerHost):\(p)") { dismiss() }
                 }
             } label: { HStack { if starting { ProgressView() }; Text(starting ? "Starting forwarding…" : "Start forwarding") } }
-            Text(!reverse && listenAll ? "From your Mac or another device on the same Wi-Fi, connect to this iPhone's Wi-Fi IP address on port \(port). It runs while Famasock is in the foreground on this iPhone." : "Connect to localhost:\(port) on \(listenerName) to use this forward. It runs while Famasock is in the foreground on this iPhone.").font(.footnote)
+            Text(!reverse && listenAll ? "From your Mac or another device on the same Wi-Fi, connect to this iPhone's Wi-Fi IP address on port \(port). Enable VPN to keep it running when switching apps." : "Connect to localhost:\(port) on \(listenerName) to use this forward. Enable VPN to keep it running when switching apps.").font(.footnote)
+            if model.vpnStatus == .connected && !reverse {
+                Text("Also connect to 10.250.0.3:\(port) from any app on this iPhone. The VPN extension keeps this forward alive in the background.").font(.footnote)
+            }
         }.navigationTitle("Port forwarding").disabled(starting || !model.ready).navigationBarBackButtonHidden(starting)
     }
 }
@@ -406,21 +409,51 @@ struct CryptoInfoView: View {
 
 struct VPNView: View {
     @EnvironmentObject var model: Model
+    @Environment(\.dismiss) private var dismiss
     let peer: String
-    @State private var route = "192.168.1.0/24"
+    @State private var fullInternet = true
+    @State private var route = ""
     @State private var dns = ""
+    @State private var starting = false
+    var routes: [String] {
+        if fullInternet { return ["0.0.0.0/0", "::/0"] }
+        return ["10.250.0.1/32", "10.250.0.3/32"] + route.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
     var body: some View {
         Form {
-            LabeledContent("Status", value: model.vpnStatusText)
-            Section("IPv4 split tunnel") {
-                TextField("Routes, comma separated", text: $route).textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("Optional DNS server within allowed routes", text: $dns).keyboardType(.decimalPad)
-                Text("Only approved private IPv4 routes enter the tunnel. Full tunneling and IPv6 are not yet available. The Linux peer needs a preconfigured TUN and explicit VPN permission.").font(.footnote)
+            Section {
+                LabeledContent("Status", value: model.vpnStatusText)
+                if model.vpnStatus == .connecting || starting { ProgressView("Starting VPN and restoring forwards…") }
+                if let error = model.vpnError { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            }
+            Section("Traffic") {
+                Toggle("Route all internet traffic", isOn: $fullInternet)
+                Text(fullInternet ? "TCP and UDP traffic, including DNS, goes through this peer over IPv4 and IPv6. The server runs as an ordinary user." : "Only the virtual hosts and extra routes use VPN. Your other traffic uses the normal internet connection.").font(.footnote)
+                if !fullInternet {
+                    TextField("Extra routes, e.g. 192.168.1.0/24", text: $route).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                TextField(fullInternet ? "DNS server (default 1.1.1.1)" : "Optional DNS server inside a VPN route", text: $dns).keyboardType(.decimalPad)
+            }
+            Section("Port forwarding in the background") {
+                Text("Existing forwards move into the VPN extension. New connections survive switching apps; existing streams reconnect once when VPN starts.").font(.footnote)
+                Text("10.250.0.1:port → localhost:port on the server\n10.250.0.3:port → a forwarded port on this iPhone").font(.callout.monospaced()).textSelection(.enabled)
             }
             if model.vpnRunning { Button("Disconnect") { model.stopVPN() } }
-            else { Button("Connect VPN") { Task { await model.startVPN(peer: peer, routes: route.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }, dns: dns) } } }
-            Button("Transfer status") { model.refreshVPNStats() }
+            else {
+                Button {
+                    starting = true
+                    Task {
+                        await model.startVPN(peer: peer, routes: routes, dns: dns.isEmpty && fullInternet ? "1.1.1.1" : dns, fullInternet: fullInternet)
+                        starting = false
+                    }
+                } label: { Text(starting ? "Starting VPN…" : "Connect VPN") }
+                .disabled(starting || !model.ready)
+            }
+            if !model.vpnHost.isEmpty { Text(model.vpnHost).font(.caption.monospaced()) }
             Text(model.vpnStats).font(.caption.monospaced())
         }.navigationTitle("VPN")
+        .onChange(of: model.vpnStatus) { _, status in
+            if status == .connected { model.notice = "VPN connected; forwards stay active in the background"; dismiss() }
+        }
     }
 }

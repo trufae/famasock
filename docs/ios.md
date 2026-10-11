@@ -101,7 +101,10 @@ your Apple developer account.
 The app and extension cannot open the same state directory simultaneously. The
 app shuts down Rust when entering the background and before starting VPN; the extension shuts down and joins its
 packet/event readers before releasing the shared state. If starting the app
-while VPN is connected, peer/status information comes from provider messages.
+while VPN is connected, peer/status information and management commands use provider messages.
+Saved forwarding/SOCKS/reverse listeners are restored in the extension, and the
+VPN screen offers ports-only or full IPv4/IPv6 internet routing. Startup failures
+are saved in the shared container and shown alongside the system disconnect error.
 Neither process generates a replacement identity just because the Keychain is
 locked or inaccessible: that is an error requiring user attention.
 
@@ -112,7 +115,9 @@ locked or inaccessible: that is an error requiring user attention.
 3. Check both identities, approve/reject/expire/cancel pairing, restart the app.
 4. Forward a service from a Linux host, including a large response and half-close.
 5. Enable optional access restrictions and verify omitted services/SOCKS destinations are refused.
-6. Configure the Linux TUN and policy from vpn.md, start VPN, test allowed subnet.
+6. Upgrade the server to 0.2.0, run it as a normal user without TUN, start VPN.
+   Test full IPv4/IPv6 internet TCP/UDP and DNS, then ports-only virtual hosts.
+   Forward localhost:2222 to server localhost:22 and use 10.250.0.3:2222 from another app.
 7. Lock the phone; test traffic, Wi-Fi/cellular changes, sleep and reconnection.
 8. Stop VPN, verify route/DNS removal and that foreground networking can reopen.
    Background the app and reconnect from system Settings; verify state ownership.

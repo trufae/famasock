@@ -30,6 +30,30 @@ final class RustCore: @unchecked Sendable {
             return root.appendingPathComponent("State", isDirectory: true)
         }
     }
+    static func saveVPNError(_ message: String?) {
+        guard let root = try? stateURL else { return }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let value: [String: Any] = ["error": message ?? ""]
+        if let data = try? JSONSerialization.data(withJSONObject: value) {
+            try? data.write(to: root.appendingPathComponent("vpn-error.json"), options: .atomic)
+        }
+    }
+    static var vpnError: String? {
+        guard let root = try? stateURL, let data = try? Data(contentsOf: root.appendingPathComponent("vpn-error.json")),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = value["error"] as? String, !error.isEmpty else { return nil }
+        return error
+    }
+    static func saveForwards(_ commands: [[String: Any]]) throws {
+        let root = try stateURL
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: commands).write(to: root.appendingPathComponent("vpn-forwards.json"), options: .atomic)
+    }
+    static var savedForwards: [[String: Any]] {
+        guard let root = try? stateURL, let data = try? Data(contentsOf: root.appendingPathComponent("vpn-forwards.json")),
+              let commands = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return commands
+    }
     private static func identity() throws -> Data {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "FamasockKeychainGroup") as? String else {
             throw FamasockError(message: "Missing Keychain access group")
@@ -113,7 +137,7 @@ final class RustCore: @unchecked Sendable {
     func receivePacket(session: String) -> Data? {
         do { try enter() } catch { return nil }
         defer { calls.leave() }
-        var bytes = [UInt8](repeating: 0, count: 1100)
+        var bytes = [UInt8](repeating: 0, count: 65_535)
         let count = session.withCString { id in
             bytes.withUnsafeMutableBufferPointer { buffer in
                 famasock_receive_packet(handle, id, buffer.baseAddress, buffer.count)

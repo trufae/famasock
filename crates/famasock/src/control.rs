@@ -65,7 +65,7 @@ pub enum Command {
     },
     Vpn {
         peer: String,
-        routes: Vec<ipnet::Ipv4Net>,
+        routes: Vec<ipnet::IpNet>,
         tun: String,
     },
     StopVpn {

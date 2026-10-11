@@ -28,11 +28,82 @@ pub extern "C" fn famasock_crypto_info() -> *mut c_char {
     string(crate::crypto_info())
 }
 
+/// Returns a QR module matrix as JSON, without requiring a running endpoint.
+/// # Safety
+/// Input must be a valid NUL-terminated string for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn famasock_qr_code(input: *const c_char) -> *mut c_char {
+    reply((|| {
+        let input = unsafe { text(input)? };
+        ensure!(input.len() <= 4096, "QR input too large");
+        let code = qrcode::QrCode::new(input)?;
+        let width = code.width();
+        let pixels: Vec<bool> = code
+            .into_colors()
+            .into_iter()
+            .map(|color| color == qrcode::Color::Dark)
+            .collect();
+        Ok(json!({"width":width, "pixels":pixels}))
+    })())
+}
+
 pub struct Handle {
     runtime: Runtime,
     node: Arc<Node>,
     events: AsyncMutex<broadcast::Receiver<Value>>,
     packets: Mutex<HashMap<String, PacketReader>>,
+}
+
+fn open_handle(path: &str, name: &str, key: Option<[u8; 32]>) -> Result<Handle> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
+    let node = runtime.block_on(Node::open(
+        Path::new(path),
+        name,
+        key,
+        crate::TransportMode::Automatic,
+    ))?;
+    let events = AsyncMutex::new(node.subscribe());
+    Ok(Handle {
+        runtime,
+        node,
+        events,
+        packets: Mutex::default(),
+    })
+}
+
+unsafe fn opened(result: Result<Handle>, error: *mut *mut c_char) -> *mut Handle {
+    if !error.is_null() {
+        unsafe {
+            *error = std::ptr::null_mut();
+        }
+    }
+    match result {
+        Ok(h) => Box::into_raw(Box::new(h)),
+        Err(e) => {
+            if !error.is_null() {
+                unsafe {
+                    *error = reply(Err(e));
+                }
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Opens a desktop endpoint using the persistent identity in the state directory.
+/// # Safety
+/// Strings must be valid C strings; error must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn famasock_open_desktop(
+    path: *const c_char,
+    name: *const c_char,
+    error: *mut *mut c_char,
+) -> *mut Handle {
+    let result = (|| open_handle(unsafe { text(path)? }, unsafe { text(name)? }, None))();
+    unsafe { opened(result, error) }
 }
 fn string(value: Value) -> *mut c_char {
     CString::new(value.to_string())
@@ -67,35 +138,9 @@ pub unsafe extern "C" fn famasock_open(
         ensure!(!key.is_null(), "Keychain identity required");
         let mut bytes = [0; 32];
         bytes.copy_from_slice(unsafe { std::slice::from_raw_parts(key, 32) });
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()?;
-        let node = runtime.block_on(Node::open(
-            Path::new(path),
-            name,
-            Some(bytes),
-            crate::TransportMode::Automatic,
-        ))?;
-        let events = AsyncMutex::new(node.subscribe());
-        Ok(Handle {
-            runtime,
-            node,
-            events,
-            packets: Mutex::default(),
-        })
+        open_handle(path, name, Some(bytes))
     })();
-    match result {
-        Ok(h) => Box::into_raw(Box::new(h)),
-        Err(e) => {
-            if !error.is_null() {
-                unsafe {
-                    *error = reply(Err(e));
-                }
-            }
-            std::ptr::null_mut()
-        }
-    }
+    unsafe { opened(result, error) }
 }
 /// # Safety
 /// Handle remains live throughout this call; input is a valid C string.
@@ -118,11 +163,11 @@ pub unsafe extern "C" fn famasock_command(
                     ensure!(readers.len() < 8, "packet reader limit reached");
                 }
                 let VpnLink { id,local_ip,remote_ip,routes,packets } = tokio::select! {
-                    result = h.node.start_vpn(peer,routes) => result?,
+                    result = h.node.start_vpn_with_transport(peer,routes,cfg!(target_os = "ios")) => result?,
                     _ = h.node.cancel.cancelled() => anyhow::bail!("core stopped"),
                 };
                 h.packets.lock().unwrap().insert(id.clone(),Arc::new(AsyncMutex::new(packets)));
-                return Ok(json!({"id":id,"local_ip":local_ip,"remote_ip":remote_ip,"routes":routes,"mtu":crate::vpn::MTU}));
+                return Ok(json!({"id":id,"local_ip":local_ip,"remote_ip":remote_ip,"local_ipv6":crate::vpn::ipv6(local_ip),"remote_ipv6":crate::vpn::ipv6(remote_ip),"forward_ip":crate::vpn::FORWARD_IP,"routes":routes,"mtu":crate::vpn::MTU}));
             }
             if input["op"] == "stop_vpn" && let Some(id)=input["id"].as_str() { h.packets.lock().unwrap().remove(id); }
             let command: Command = serde_json::from_value(input)?;
@@ -156,7 +201,10 @@ pub unsafe extern "C" fn famasock_send_packet(
 ) -> i32 {
     let result = (|| -> Result<()> {
         let h = unsafe { handle.as_ref() }.context("null handle")?;
-        ensure!(!bytes.is_null() && len <= crate::vpn::MTU, "invalid packet");
+        ensure!(
+            !bytes.is_null() && len <= crate::vpn::MAX_PACKET,
+            "invalid packet"
+        );
         h.node.send_packet(unsafe { text(session)? }, unsafe {
             std::slice::from_raw_parts(bytes, len)
         })
@@ -176,7 +224,7 @@ pub unsafe extern "C" fn famasock_receive_packet(
     let result = (|| -> Result<i32> {
         let h = unsafe { handle.as_ref() }.context("null handle")?;
         ensure!(
-            !buffer.is_null() && capacity >= crate::vpn::MTU,
+            !buffer.is_null() && capacity >= crate::vpn::MAX_PACKET,
             "buffer too small"
         );
         let id = unsafe { text(session)? };
@@ -235,6 +283,33 @@ pub unsafe extern "C" fn famasock_string_free(value: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn qr_matrix_and_invalid_ffi_inputs() {
+        let input = CString::new("famasock QR test").unwrap();
+        unsafe {
+            let raw = famasock_qr_code(input.as_ptr());
+            let value: Value = serde_json::from_str(CStr::from_ptr(raw).to_str().unwrap()).unwrap();
+            let width = value["data"]["width"].as_u64().unwrap() as usize;
+            assert_eq!(
+                value["data"]["pixels"].as_array().unwrap().len(),
+                width * width
+            );
+            assert!(value["data"]["pixels"][0].as_bool().unwrap());
+            famasock_string_free(raw);
+            let raw = famasock_qr_code(std::ptr::null());
+            assert!(
+                CStr::from_ptr(raw)
+                    .to_str()
+                    .unwrap()
+                    .contains("null string")
+            );
+            famasock_string_free(raw);
+            let mut error = std::ptr::null_mut();
+            assert!(famasock_open_desktop(std::ptr::null(), input.as_ptr(), &mut error).is_null());
+            assert!(!error.is_null());
+            famasock_string_free(error);
+        }
+    }
     #[test]
     fn ffi_commands_and_blocked_event_reader_shutdown_cleanly() {
         let dir = tempfile::tempdir().unwrap();

@@ -64,14 +64,16 @@ APK/lint/emulator results; source implementation alone is not device verificatio
 
 - [ ] Privileged Linux route/NAT/DNS setup helper with automatic cleanup;
       current TUN and route provisioning is explicit, documented administration.
-- [ ] Full-tunnel IPv4 with transport bypass and exit-node policy/firewall tests.
-- [ ] IPv6 VPN and macOS CLI VPN.
+- [x] Rootless IPv4/IPv6 TCP/UDP VPN exit, full iOS routing with provider transport bypass.
+      Real packet/TCP/UDP tests cover virtual hosts, fragmentation, empty UDP,
+      route authorization and revocation; physical-device routing remains unverified.
+- [ ] macOS system/CLI VPN client (macOS already supports rootless VPN exits).
 - [ ] SOCKS UDP ASSOCIATE, bounded flow mapping and remote UDP/DNS policies.
 - [ ] VPN automatic reconnect/backoff and physical-device network-change tests.
-- [ ] Persist/re-enable saved tunnel profiles and richer connection history.
-- [ ] Optional Chatmail account/contact/messaging/control integration.
-- [x] Shared original app icon for iOS/Android and README.
-- [ ] Accessibility/localization pass and signed distribution packaging.
+- [x] iOS saved forward/SOCKS/reverse profiles restored inside the VPN extension.
+- [ ] Richer connection history.
+- Chatmail integration is intentionally excluded; direct Iroh QR pairing is sufficient.
+- [ ] App icon, accessibility/localization pass, signed distribution packaging.
 
 ## Next-session entry point
 

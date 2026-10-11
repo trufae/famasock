@@ -28,7 +28,7 @@ and [iOS guide](docs/ios.md) for verification details and limitations.
 | TCP forward | A port on this device connects to a destination on a peer. | Reach home SSH at `127.0.0.1:2222`, or a home web app at `127.0.0.1:8080`. |
 | Reverse forward | A port on the peer connects back to a destination on this device. | Let the home machine reach your laptop's development server. |
 | SOCKS5 proxy | SOCKS-aware applications send TCP connections through a chosen peer; the peer resolves destination names. | Use `curl` through your home network without changing system routes. |
-| Split-route VPN | Selected private IPv4 networks use a paired Linux peer through a system TUN interface. | Reach `192.168.1.0/24` from a phone after configuring the Linux gateway. |
+| VPN | Selected routes, or full IPv4/IPv6 internet traffic on iOS, use a paired rootless exit peer. | Reach a private network or route phone traffic through a home peer. |
 | Peer management | Pair, rename, disconnect, restrict or revoke trusted devices. | Keep separate home, laptop and phone peers. |
 
 Pairing establishes trust; it does not automatically create tunnels or redirect
@@ -41,11 +41,12 @@ traffic. After pairing, choose one of the connection types above.
 | Android 8.0+ | Native app in [`apps/android`](apps/android): QR scanner, peers, tunnels and VPN | A foreground service runs while its notification is active. |
 | iPhone / iPad, iOS 17+ | Native SwiftUI app in [`apps/ios`](apps/ios): QR scanner, peers, tunnels, TCP diagnostics and VPN | Ordinary socket tunnels require the app in the foreground; VPN runs in a Packet Tunnel extension. |
 | Linux | `famasock` CLI and daemon | Keep `serve` running, optionally as a user systemd service. Supports a pre-provisioned VPN TUN. |
-| macOS | `famasock` CLI and daemon | Keep `serve` running. CLI VPN is not implemented. |
+| macOS | `famasock` CLI and daemon; native SwiftUI app in [`apps/macos`](apps/macos) | Keep `serve` running. CLI VPN is not implemented. |
 
 The mobile apps and CLI share the same Rust networking and authorization core.
 Android stores the identity encrypted with a Keystore key; iOS uses Keychain.
-Saved peers persist. Active tunnel configurations must be recreated after a
+Saved peers persist. iOS restores saved forward, SOCKS and reverse profiles in
+its VPN extension; other active tunnel configurations must be recreated after a
 networking restart.
 
 ## Quick start: phone → home computer
@@ -215,19 +216,25 @@ Use unprivileged listening ports, such as 2222, 8080 or 1080.
 
 ## Optional VPN setup
 
-VPN needs more setup than TCP forwarding: a Linux peer with an explicit VPN policy,
-a pre-provisioned TUN, packet forwarding and return routes. Follow
-[the Linux VPN setup guide](docs/vpn.md), then select that peer and the allowed
-private IPv4 routes in the phone's VPN screen.
+VPN needs more setup than TCP forwarding. The rootless exit on Linux or macOS
+uses ordinary TCP/UDP sockets; legacy Linux clients still require a provisioned
+TUN. Follow [the VPN setup guide](docs/vpn.md), then select the peer and routes
+in the phone's VPN screen.
 
 The current transport uses QUIC datagrams with MTU 1100. Android uses `VpnService`;
-iOS uses `NEPacketTunnelProvider`. Only the selected private networks use this
-split tunnel. Android leaves DNS on the system network and excludes Famasock's
-own transport sockets from VPN.
+iOS uses `NEPacketTunnelProvider`, offering ports-only or full IPv4/IPv6 routing.
+Android leaves DNS on the system network and excludes Famasock's own transport
+sockets from VPN.
 
-Full-tunnel VPN, IPv6 VPN, macOS CLI VPN and automatic VPN reconnect are not
-implemented. Chatmail account/contact/control integration is also not implemented;
-QR pairing works independently of it.
+macOS system/CLI VPN, SOCKS UDP and automatic VPN reconnect are not implemented.
+Chatmail integration is intentionally excluded; direct Iroh QR pairing is sufficient.
+
+## Desktop apps
+
+Native SwiftUI macOS and GTK4/Vala Linux apps live in `apps/macos` and `apps/gtk`.
+They share the Rust core and provide peer pairing/approval with QR codes, TCP
+forward/reverse/SOCKS controls, crypto/version information and a TCP test client.
+See [desktop build and run instructions](docs/desktop.md).
 
 ## Start at login on Linux
 
