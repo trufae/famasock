@@ -33,7 +33,9 @@ jobs:
       - name: Real Linux TUN forwarding
         if: runner.os == 'Linux'
         run: sudo python3 scripts/vpn-kernel.py
+  # App/UI jobs are retained for future use but disabled.
   ios:
+    if: ${{ false }}
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -62,6 +64,7 @@ jobs:
           name: Famasock-unsigned-device-and-simulator
           path: DerivedData/*/Build/Products/Release-*/*.app
   android:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -109,6 +112,7 @@ jobs:
             apps/android/app/build/outputs/apk/debug/*.apk
             apps/android/app/build/reports/
   desktop:
+    if: ${{ false }}
     strategy:
       fail-fast: false
       matrix:

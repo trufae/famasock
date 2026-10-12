@@ -50,21 +50,46 @@ async fn pairing_again_requires_approval_and_preserves_permissions() {
     let home_id = pair(&home, &phone).await;
     let phone_id = phone.endpoint.id().to_string();
     home.rename(&phone_id, "My iPhone").unwrap();
-    home.set_policy(&phone_id, Policy { restricted: true, ..Default::default() }).unwrap();
+    home.set_policy(
+        &phone_id,
+        Policy {
+            restricted: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     // The server still knows the identity even if the client lost its peer record.
     phone.revoke(&home_id).unwrap();
     let invite = home.invitation().unwrap();
+    let mut forged = invite.clone();
+    forged.secret = famasock::pairing::random().unwrap();
+    assert_eq!(
+        phone
+            .pair(&forged.uri().unwrap(), "iPhone")
+            .await
+            .unwrap_err()
+            .to_string(),
+        "invalid invitation proof"
+    );
+    assert!(home.pending().as_array().unwrap().is_empty());
     let uri = invite.uri().unwrap();
     let p = phone.clone();
     let u = uri.clone();
     let task = tokio::spawn(async move { p.pair(&u, "iPhone").await });
     timeout(Duration::from_secs(5), async {
         loop {
-            if !home.pending().as_array().unwrap().is_empty() { break; }
-            assert!(!task.is_finished(), "re-pairing closed before showing approval");
+            if !home.pending().as_array().unwrap().is_empty() {
+                break;
+            }
+            assert!(
+                !task.is_finished(),
+                "re-pairing closed before showing approval"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     assert!(!task.is_finished(), "re-pairing must wait for approval");
     home.approve(&invite.id, true).unwrap();
     assert_eq!(task.await.unwrap().unwrap(), home_id);

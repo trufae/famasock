@@ -453,7 +453,13 @@ impl Node {
             let mut store = self.store.lock().unwrap();
             ensure!(store.state.peers.len() < 64, "peer limit reached");
             store.update(|s| {
-                s.peers.entry(conn.remote_id().to_string()).or_insert(peer);
+                s.peers
+                    .entry(conn.remote_id().to_string())
+                    .and_modify(|existing| {
+                        existing.device = peer.device.clone();
+                        existing.addr = peer.addr.clone();
+                    })
+                    .or_insert(peer);
             })?;
         }
         self.emit(json!({"event":"paired","peer":conn.remote_id().to_string()}));
@@ -671,7 +677,11 @@ impl Node {
                     return crate::tcp::bridge(tcp, send, recv, stop).await;
                 }
                 Request::Vpn { routes, session } => return self.accept_vpn(conn.clone(), p.policy, routes, session, send, recv).await,
-                Request::Pair { .. } => bail!("already paired"),
+                request @ Request::Pair { .. } => {
+                    let data = Self::checked(&mut send, self.pair_request(&conn, request).await).await?;
+                    wire::write(&mut send, &Reply::ok(data)).await?;
+                    send.finish()?;
+                }
             }
             Ok(())
         }.await;

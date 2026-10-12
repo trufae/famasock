@@ -79,7 +79,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     self.readPackets(core: core, id: id)
                     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                         while let packet = core.receivePacket(session: id) {
-                            let proto = packet.first.map { $0 >> 4 == 6 ? AF_INET6 : AF_INET } ?? AF_INET
+                            let proto = (packet.first ?? 0) >> 4 == 6 ? AF_INET6 : AF_INET
                             self?.packetFlow.writePackets([packet], withProtocols: [NSNumber(value: proto)])
                         }
                         self?.work.async { [weak self] in
